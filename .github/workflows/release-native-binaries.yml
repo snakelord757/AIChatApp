@@ -1,0 +1,107 @@
+name: Release native binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset-name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset-name: aichat-windows-x64
+            gradle: .\gradlew.bat
+            binary: build\native\nativeCompile\aichat.exe
+            smoke-binary: .\build\native\nativeCompile\aichat.exe
+            package-command: Compress-Archive -Path build\native\nativeCompile\aichat.exe -DestinationPath aichat-windows-x64.zip -Force
+            package-path: aichat-windows-x64.zip
+          - os: ubuntu-latest
+            asset-name: aichat-linux-x64
+            gradle: ./gradlew
+            binary: build/native/nativeCompile/aichat
+            smoke-binary: ./build/native/nativeCompile/aichat
+            package-command: tar -czf aichat-linux-x64.tar.gz -C build/native/nativeCompile aichat
+            package-path: aichat-linux-x64.tar.gz
+          - os: macos-14
+            asset-name: aichat-macos-arm64
+            gradle: ./gradlew
+            binary: build/native/nativeCompile/aichat
+            smoke-binary: ./build/native/nativeCompile/aichat
+            package-command: tar -czf aichat-macos-arm64.tar.gz -C build/native/nativeCompile aichat
+            package-path: aichat-macos-arm64.tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: graalvm
+          java-version: "21"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make Gradle wrapper executable
+        if: runner.os != 'Windows'
+        run: chmod +x ./gradlew
+
+      - name: Run tests
+        run: ${{ matrix.gradle }} test
+
+      - name: Build native binary
+        run: ${{ matrix.gradle }} nativeCompile
+
+      - name: Smoke test help
+        run: ${{ matrix.smoke-binary }} --help
+
+      - name: Smoke test version
+        run: ${{ matrix.smoke-binary }} --version
+
+      - name: Package native binary
+        run: ${{ matrix.package-command }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset-name }}
+          path: ${{ matrix.package-path }}
+          if-no-files-found: error
+
+  release:
+    name: Upload binaries to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download native binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.inputs.tag_name || github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release-assets/* --clobber
+          else
+            gh release create "$TAG_NAME" release-assets/* --title "AIChatApp $TAG_NAME" --generate-notes
+          fi

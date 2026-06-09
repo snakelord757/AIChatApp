@@ -10,38 +10,39 @@ class ChatApplication(
     private val agent: AiAgent,
     initialSettings: AgentSettings,
     private val historyRepository: ChatHistoryRepository,
-    private val renderer: ConsoleRenderer
+    private val renderer: ConsoleRenderer,
+    private val input: ConsoleInput = ConsoleInput()
 ) {
     private var settings = initialSettings
-    private val settingsScreen = SettingsScreen(renderer)
+    private val settingsScreen = SettingsScreen(renderer, input)
 
     fun run() {
         renderer.renderGreeting()
 
         while (true) {
             renderer.prompt()
-            val input = readLine()?.trim() ?: break
+            val userInput = input.readLine()?.trim() ?: break
 
             when {
-                input.isBlank() -> renderer.renderSystem("Введите сообщение или команду.")
-                input in setOf("/exit", "/quit", "/выход") -> {
+                userInput.isBlank() -> renderer.renderSystem("Введите сообщение или команду.")
+                userInput in setOf("/exit", "/quit", "/выход") -> {
                     renderer.renderSystem("До свидания!")
                     return
                 }
-                input in setOf("/help", "/помощь") -> renderer.renderHelp()
-                input in setOf("/settings", "/настройки") -> {
+                userInput in setOf("/help", "/помощь") -> renderer.renderHelp()
+                userInput in setOf("/settings", "/настройки") -> {
                     settings = settingsScreen.open(settings)
                     agent.updateSettings(settings)
                     historyRepository.updateSystemPrompt(settings.systemPrompt)
                     renderer.renderSystem("Возврат в чат. История сохранена.")
                 }
-                input in setOf("/clear", "/очистить") -> {
+                userInput in setOf("/clear", "/очистить") -> {
                     historyRepository.clear(settings.systemPrompt)
                     ConsoleScreen.clear()
                     renderer.renderGreeting()
                 }
-                input.startsWith("/") -> renderer.renderError("Неизвестная команда. Введите /help для списка команд.")
-                else -> handleUserMessage(input)
+                userInput.startsWith("/") -> renderer.renderError("Неизвестная команда. Введите /help для списка команд.")
+                else -> handleUserMessage(userInput)
             }
         }
 
