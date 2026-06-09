@@ -4,7 +4,8 @@ import agent.AgentSettings
 import java.net.URI
 
 class SettingsScreen(
-    private val renderer: ConsoleRenderer
+    private val renderer: ConsoleRenderer,
+    private val input: ConsoleInput = ConsoleInput()
 ) {
     fun open(current: AgentSettings): AgentSettings {
         var settings = current
@@ -12,13 +13,13 @@ class SettingsScreen(
 
         while (true) {
             print("настройки> ")
-            val input = readLine()?.trim() ?: return settings
-            if (input.isBlank()) {
+            val userInput = input.readLine()?.trim() ?: return settings
+            if (userInput.isBlank()) {
                 renderer.renderSystem("Введите команду настроек.")
                 continue
             }
 
-            val parts = input.split(Regex("\\s+"), limit = 3)
+            val parts = userInput.split(Regex("\\s+"), limit = 3)
             when (parts.first().lowercase()) {
                 "показать", "show" -> renderer.renderSettings(settings)
                 "помощь", "help" -> renderHelp()
