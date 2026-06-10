@@ -19,7 +19,7 @@ class DeepSeekAiAgent(
 ) : AiAgent {
     private var settings = initialSettings
 
-    override fun send(userMessage: String): String {
+    override fun send(userMessage: String): AgentResponse {
         historyRepository.addUser(userMessage)
         val history = historyRepository.all()
 
@@ -47,8 +47,9 @@ class DeepSeekAiAgent(
 
         val answer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek вернул пустой или неожиданный JSON-ответ.")
-        historyRepository.addAssistant(answer)
-        return answer
+        val usage = JsonTools.extractUsage(response.body())
+        historyRepository.addAssistant(answer, usage)
+        return AgentResponse(answer, usage)
     }
 
     override fun updateSettings(settings: AgentSettings) {
@@ -65,13 +66,25 @@ class DeepSeekAiAgent(
             """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
         }
 
-        return """
-            {
-              "model": "${JsonTools.escape(settings.model)}",
-              "messages": [$messages],
-              "temperature": ${settings.temperature},
-              "max_tokens": ${settings.maxTokens}
-            }
-        """.trimIndent()
+        val thinkingType = if (settings.thinkingMode) "enabled" else "disabled"
+        val fields = mutableListOf(
+            """"model": "${JsonTools.escape(settings.model)}"""",
+            """"messages": [$messages]""",
+            """"thinking": {"type": "$thinkingType"}"""
+        )
+        if (settings.thinkingMode) {
+            fields += """"reasoning_effort": "high""""
+        } else {
+            fields += """"temperature": ${settings.temperature}"""
+        }
+        if (settings.maxTokens > 0) {
+            fields += """"max_tokens": ${settings.maxTokens}"""
+        }
+
+        return fields.joinToString(
+            separator = ",\n  ",
+            prefix = "{\n  ",
+            postfix = "\n}"
+        )
     }
 }

@@ -13,7 +13,7 @@ class SettingsScreen(
 
         while (true) {
             print("настройки> ")
-            val userInput = input.readLine()?.trim() ?: return settings
+            val userInput = input.readLine()?.trimSettingsInput() ?: return settings
             if (userInput.isBlank()) {
                 renderer.renderSystem("Введите команду настроек.")
                 continue
@@ -47,9 +47,10 @@ class SettingsScreen(
     private fun renderHelp() {
         println("Команды настроек:")
         println("show / показать - показать текущие настройки")
-        println("set model <значение> - изменить модель")
+        println("set model <deepseek-v4-flash|deepseek-v4-pro> - изменить модель")
+        println("set thinking <on|off> - включить или отключить thinking mode")
         println("set temperature <0..2> - изменить температуру")
-        println("set maxTokens <число> - изменить максимум токенов")
+        println("set maxTokens <число> - изменить максимум токенов; <= 0 - без ограничений")
         println("set systemPrompt <текст> - изменить системный промпт")
         println("set baseUrl <url> - изменить базовый URL")
         println("back / назад - вернуться в чат")
@@ -58,7 +59,15 @@ class SettingsScreen(
     private fun update(settings: AgentSettings, rawKey: String, value: String): AgentSettings {
         return when (rawKey.lowercase()) {
             "model", "модель" -> {
-                if (value.isBlank()) invalid(settings) else settings.copy(model = value.trim())
+                val model = value.trim()
+                if (model !in AgentSettings.supportedModels) invalid(settings) else settings.copy(model = model)
+            }
+            "thinking", "thinkingmode", "размышление" -> {
+                when (value.trim().lowercase()) {
+                    "on", "true", "enabled", "1", "вкл", "включить" -> settings.copy(thinkingMode = true)
+                    "off", "false", "disabled", "0", "выкл", "отключить" -> settings.copy(thinkingMode = false)
+                    else -> invalid(settings)
+                }
             }
             "temperature", "температура" -> {
                 val temperature = value.toDoubleOrNull()
@@ -66,7 +75,7 @@ class SettingsScreen(
             }
             "maxtokens", "max_tokens", "токены" -> {
                 val maxTokens = value.toIntOrNull()
-                if (maxTokens == null || maxTokens <= 0) invalid(settings) else settings.copy(maxTokens = maxTokens)
+                if (maxTokens == null) invalid(settings) else settings.copy(maxTokens = maxTokens)
             }
             "systemprompt", "prompt", "промпт" -> {
                 if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)
@@ -92,4 +101,6 @@ class SettingsScreen(
     } catch (_: IllegalArgumentException) {
         false
     }
+
+    private fun String.trimSettingsInput(): String = trim { it.isWhitespace() || it == '\uFEFF' }
 }

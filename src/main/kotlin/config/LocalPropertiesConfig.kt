@@ -11,8 +11,18 @@ object LocalPropertiesConfig {
     private val configPath: Path = Path.of("local.properties").toAbsolutePath().normalize()
 
     sealed class Result {
-        data class Success(val settings: AgentSettings) : Result()
-        data class Failure(val message: String, val fallbackSettings: AgentSettings) : Result()
+        data class Success(
+            val settings: AgentSettings,
+            val pricing: TokenPricing?,
+            val pricingWarning: String?
+        ) : Result()
+
+        data class Failure(
+            val message: String,
+            val fallbackSettings: AgentSettings,
+            val pricing: TokenPricing?,
+            val pricingWarning: String?
+        ) : Result()
     }
 
     fun load(): Result {
@@ -22,26 +32,41 @@ object LocalPropertiesConfig {
         )
 
         if (!Files.exists(configPath)) {
-            return Result.Failure(missingMessage("Файл local.properties не найден."), fallback)
+            return Result.Failure(
+                missingMessage("Файл local.properties не найден."),
+                fallback,
+                pricing = null,
+                pricingWarning = pricingWarning()
+            )
         }
 
         val properties = Properties()
         Files.newInputStream(configPath).use(properties::load)
+        val pricing = parsePricing(properties)
+        val pricingWarning = if (pricing == null) pricingWarning() else null
 
         val apiKey = properties.getProperty("DEEPSEEK_API_KEY")?.trim().orEmpty()
         if (apiKey.isBlank() || apiKey == "your_api_key_here") {
-            return Result.Failure(missingMessage("В local.properties не задан обязательный DEEPSEEK_API_KEY."), fallback)
+            return Result.Failure(
+                missingMessage("В local.properties не задан обязательный DEEPSEEK_API_KEY."),
+                fallback,
+                pricing,
+                pricingWarning
+            )
         }
 
         val baseUrl = properties.getProperty("DEEPSEEK_BASE_URL")?.trim()?.takeIf { it.isNotBlank() }
             ?: fallback.baseUrl
         val model = properties.getProperty("DEEPSEEK_MODEL")?.trim()?.takeIf { it.isNotBlank() }
-            ?: fallback.model
+            ?.takeIf { it in AgentSettings.supportedModels }
+            ?: AgentSettings.defaultModel
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
                 missingMessage("В local.properties задан некорректный DEEPSEEK_BASE_URL: $baseUrl"),
-                fallback
+                fallback,
+                pricing,
+                pricingWarning
             )
         }
 
@@ -50,9 +75,33 @@ object LocalPropertiesConfig {
                 apiKey = apiKey,
                 baseUrl = baseUrl.trimEnd('/'),
                 model = model
-            )
+            ),
+            pricing,
+            pricingWarning
         )
     }
+
+    private fun parsePricing(properties: Properties): TokenPricing? {
+        val unified = properties.getUsd("DEEPSEEK_TOKEN_PRICE_PER_1M_USD")
+        if (unified != null) {
+            return TokenPricing(unified, unified, unified)
+        }
+
+        val input = properties.getUsd("DEEPSEEK_INPUT_PRICE_PER_1M_USD")
+        val output = properties.getUsd("DEEPSEEK_OUTPUT_PRICE_PER_1M_USD")
+        val reasoning = properties.getUsd("DEEPSEEK_REASONING_PRICE_PER_1M_USD") ?: output
+        return if (input != null && output != null && reasoning != null) {
+            TokenPricing(input, output, reasoning)
+        } else {
+            null
+        }
+    }
+
+    private fun Properties.getUsd(key: String): Double? =
+        getProperty(key)?.trim()?.takeIf { it.isNotBlank() }?.toDoubleOrNull()?.takeIf { it >= 0.0 }
+
+    private fun pricingWarning(): String =
+        "Цена токенов не настроена в local.properties. Добавьте DEEPSEEK_TOKEN_PRICE_PER_1M_USD или DEEPSEEK_INPUT_PRICE_PER_1M_USD/DEEPSEEK_OUTPUT_PRICE_PER_1M_USD."
 
     private fun isValidUrl(value: String): Boolean = try {
         val uri = URI(value.trim())
@@ -68,6 +117,6 @@ object LocalPropertiesConfig {
         Пример формата:
         DEEPSEEK_API_KEY=your_api_key_here
         DEEPSEEK_BASE_URL=https://api.deepseek.com
-        DEEPSEEK_MODEL=deepseek-chat
+        DEEPSEEK_MODEL=deepseek-v4-flash
     """.trimIndent()
 }
