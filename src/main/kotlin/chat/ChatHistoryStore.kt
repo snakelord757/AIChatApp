@@ -32,7 +32,9 @@ class ChatHistoryStore private constructor(
         bytes.flip()
         val json = StandardCharsets.UTF_8.decode(bytes).toString().trim()
         if (json.isEmpty()) return emptyList()
-        return ChatHistoryJson.decodeMessages(json)
+        return ChatHistoryJson.decodeMessages(json).map { message ->
+            message.copy(content = MojibakeRepair.repair(message.content))
+        }
     }
 
     fun write(messages: List<ChatMessage>) {
