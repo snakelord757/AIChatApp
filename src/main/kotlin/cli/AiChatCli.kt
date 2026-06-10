@@ -50,41 +50,54 @@ object AiChatCli {
         val historyStore = try {
             ChatHistoryStore.open()
         } catch (exception: ChatHistoryBusyException) {
-            renderer.renderError(exception.message ?: "Не могу продолжить работу, т.к. файл истории чата занят другим процессом. История чата разблокируется при завершении работы программы через функцию exit или завершение процесса")
+            renderer.renderError(exception.message ?: "Не могу продолжить работу: файл истории чата занят другим процессом.")
             return
         }
 
         try {
             val restoredMessages = historyStore.read()
+            val settings = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> configResult.settings
+                is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings
+            }
+            val pricing = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> configResult.pricing
+                is LocalPropertiesConfig.Result.Failure -> configResult.pricing
+            }
+            val pricingWarning = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> configResult.pricingWarning
+                is LocalPropertiesConfig.Result.Failure -> configResult.pricingWarning
+            }
+
             val historyRepository = ChatHistoryRepository(
-                systemPrompt = when (configResult) {
-                    is LocalPropertiesConfig.Result.Success -> configResult.settings.systemPrompt
-                    is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings.systemPrompt
-                },
+                systemPrompt = settings.systemPrompt,
                 restoredMessages = restoredMessages,
                 onChanged = historyStore::write
             )
 
-            val (settings, agent) = when (configResult) {
-                is LocalPropertiesConfig.Result.Success -> configResult.settings to DeepSeekAiAgent(
+            val agent = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> DeepSeekAiAgent(
                     historyRepository = historyRepository,
                     initialSettings = configResult.settings
                 )
-            is LocalPropertiesConfig.Result.Failure -> {
-                renderer.renderError(configResult.message)
-                renderer.renderSystem("Реальный ключ не найден, поэтому запущен локальный демонстрационный режим без обращения к DeepSeek.")
-                configResult.fallbackSettings to MockAiAgent(
-                    historyRepository = historyRepository,
-                    initialSettings = configResult.fallbackSettings
-                )
+                is LocalPropertiesConfig.Result.Failure -> {
+                    renderer.renderError(configResult.message)
+                    renderer.renderSystem("Реальный ключ не найден, поэтому запущен локальный демонстрационный режим без обращения к DeepSeek.")
+                    MockAiAgent(
+                        historyRepository = historyRepository,
+                        initialSettings = configResult.fallbackSettings
+                    )
+                }
             }
-        }
 
             ChatApplication(
                 agent = agent,
                 initialSettings = settings,
                 historyRepository = historyRepository,
-                renderer = renderer
+                renderer = renderer,
+                pricing = pricing,
+                startupWarning = pricingWarning,
+                showStartupWarning = restoredMessages.isEmpty()
             ).run()
         } finally {
             historyStore.close()
@@ -129,7 +142,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /summary, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }

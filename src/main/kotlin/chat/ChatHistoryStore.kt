@@ -2,7 +2,6 @@ package chat
 
 import java.io.Closeable
 import java.io.IOException
-import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
@@ -91,18 +90,21 @@ class ChatHistoryStore private constructor(
                 return Paths.get(it).toAbsolutePath().normalize()
             }
 
-            ProcessHandle.current().info().command().orElse(null)?.let { command ->
-                val commandPath = Paths.get(command).toAbsolutePath().normalize()
-                if (Files.isRegularFile(commandPath)) return commandPath.parent
+            if (isWindows()) {
+                System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }?.let {
+                    return Paths.get(it).resolve("AIChatApp").toAbsolutePath().normalize()
+                }
             }
 
-            val codeSource = ChatHistoryStore::class.java.protectionDomain.codeSource?.location
-            if (codeSource != null && codeSource.protocol == "file") {
-                val codePath = Paths.get(URI.create(codeSource.toString())).toAbsolutePath().normalize()
-                return if (Files.isRegularFile(codePath)) codePath.parent else codePath
+            System.getProperty("user.home")?.takeIf { it.isNotBlank() }?.let {
+                return Paths.get(it).resolve(".aichat").toAbsolutePath().normalize()
             }
 
             return Paths.get("").toAbsolutePath().normalize()
+        }
+
+        private fun isWindows(): Boolean {
+            return System.getProperty("os.name").contains("windows", ignoreCase = true)
         }
     }
 }

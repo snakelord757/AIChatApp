@@ -1,0 +1,9 @@
+package agent
+
+enum class ResponseLimitReason {
+    REQUEST_MAX_TOKENS,
+    SERVER_DEFAULT_OUTPUT_LIMIT,
+    MODEL_CONTEXT_WINDOW,
+    MODEL_MAX_OUTPUT,
+    UNKNOWN_LENGTH_LIMIT
+}

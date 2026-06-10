@@ -8,7 +8,7 @@ class MockAiAgent(
 ) : AiAgent {
     private var settings = initialSettings
 
-    override fun send(userMessage: String): String {
+    override fun send(userMessage: String): AgentResponse {
         historyRepository.addUser(userMessage)
         val answer = """
             ## Демонстрационный ответ
@@ -20,7 +20,7 @@ class MockAiAgent(
             Добавьте `DEEPSEEK_API_KEY` в `local.properties`, чтобы получать настоящие ответы модели `${settings.model}`.
         """.trimIndent()
         historyRepository.addAssistant(answer)
-        return answer
+        return AgentResponse(answer)
     }
 
     override fun updateSettings(settings: AgentSettings) {
