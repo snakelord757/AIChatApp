@@ -17,9 +17,9 @@ object ConsoleEncoding {
 
     private fun detectConsoleCharset(): Charset {
         return configuredCharset()
-            ?: windowsCodePageCharset()
-            ?: System.console()?.charset()
             ?: charsetFromProperty("sun.stdout.encoding")
+            ?: System.console()?.charset()
+            ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
 
@@ -47,8 +47,11 @@ object ConsoleEncoding {
                 .inputStream
                 .bufferedReader()
                 .readText()
-            val codePage = Regex("""\d+""").find(output)?.value ?: return@runCatching null
-            Charset.forName("cp$codePage")
+            when (val codePage = Regex("""\d+""").find(output)?.value) {
+                "65001" -> Charsets.UTF_8
+                null -> null
+                else -> Charset.forName("cp$codePage")
+            }
         }.getOrNull()
 
         return detected ?: charsetFromValue("cp866")
