@@ -7,6 +7,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
 import java.time.Duration
 
 class DeepSeekAiAgent(
@@ -30,7 +31,7 @@ class DeepSeekAiAgent(
             .build()
 
         val response = try {
-            httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         } catch (exception: IOException) {
             throw AgentException("Не удалось подключиться к DeepSeek. Проверьте интернет и базовый URL.", exception)
         } catch (exception: InterruptedException) {

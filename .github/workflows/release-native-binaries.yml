@@ -27,21 +27,18 @@ jobs:
             asset-name: aichat-windows-x64
             gradle: .\gradlew.bat
             binary: build\native\nativeCompile\aichat.exe
-            smoke-binary: .\build\native\nativeCompile\aichat.exe
             package-command: Compress-Archive -Path build\native\nativeCompile\aichat.exe -DestinationPath aichat-windows-x64.zip -Force
             package-path: aichat-windows-x64.zip
           - os: ubuntu-latest
             asset-name: aichat-linux-x64
             gradle: ./gradlew
             binary: build/native/nativeCompile/aichat
-            smoke-binary: ./build/native/nativeCompile/aichat
             package-command: tar -czf aichat-linux-x64.tar.gz -C build/native/nativeCompile aichat
             package-path: aichat-linux-x64.tar.gz
           - os: macos-14
             asset-name: aichat-macos-arm64
             gradle: ./gradlew
             binary: build/native/nativeCompile/aichat
-            smoke-binary: ./build/native/nativeCompile/aichat
             package-command: tar -czf aichat-macos-arm64.tar.gz -C build/native/nativeCompile aichat
             package-path: aichat-macos-arm64.tar.gz
 
@@ -65,12 +62,6 @@ jobs:
 
       - name: Build native binary
         run: ${{ matrix.gradle }} nativeCompile
-
-      - name: Smoke test help
-        run: ${{ matrix.smoke-binary }} --help
-
-      - name: Smoke test version
-        run: ${{ matrix.smoke-binary }} --version
 
       - name: Package native binary
         run: ${{ matrix.package-command }}

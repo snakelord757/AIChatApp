@@ -4,22 +4,34 @@ import java.io.PrintStream
 import java.nio.charset.Charset
 
 object ConsoleEncoding {
-    private val consoleCharset: Charset by lazy { detectConsoleCharset() }
+    private val outputCharset: Charset by lazy { detectOutputCharset() }
+    private val inputCharset: Charset by lazy { detectInputCharset() }
 
     fun configureConsole() {
-        System.setOut(PrintStream(System.out, true, consoleCharset))
-        System.setErr(PrintStream(System.err, true, consoleCharset))
+        System.setOut(ConsolePrintStream(System.out, outputCharset))
+        System.setErr(ConsolePrintStream(System.err, outputCharset))
     }
 
     fun inputCharset(): Charset {
-        return consoleCharset
+        return inputCharset
     }
 
-    private fun detectConsoleCharset(): Charset {
+    private fun detectOutputCharset(): Charset {
         return configuredCharset()
+            ?: utf8WindowsTerminalCharset()
             ?: windowsCodePageCharset()
             ?: System.console()?.charset()
             ?: charsetFromProperty("sun.stdout.encoding")
+            ?: windowsCodePageCharset()
+            ?: Charset.defaultCharset()
+    }
+
+    private fun detectInputCharset(): Charset {
+        return configuredCharset()
+            ?: utf8WindowsTerminalCharset()
+            ?: charsetFromProperty("sun.stdin.encoding")
+            ?: System.console()?.charset()
+            ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
 
@@ -47,11 +59,19 @@ object ConsoleEncoding {
                 .inputStream
                 .bufferedReader()
                 .readText()
-            val codePage = Regex("""\d+""").find(output)?.value ?: return@runCatching null
-            Charset.forName("cp$codePage")
+            when (val codePage = Regex("""\d+""").find(output)?.value) {
+                "65001" -> Charsets.UTF_8
+                null -> null
+                else -> Charset.forName("cp$codePage")
+            }
         }.getOrNull()
 
         return detected ?: charsetFromValue("cp866")
+    }
+
+    private fun utf8WindowsTerminalCharset(): Charset? {
+        if (!isWindows()) return null
+        return if (System.getenv("WT_SESSION").isNullOrBlank()) null else Charsets.UTF_8
     }
 
     private fun isWindows(): Boolean {
