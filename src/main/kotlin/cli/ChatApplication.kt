@@ -18,6 +18,7 @@ class ChatApplication(
 
     fun run() {
         renderer.renderGreeting()
+        renderer.renderHistory(historyRepository.all())
 
         while (true) {
             renderer.prompt()

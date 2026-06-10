@@ -1,6 +1,8 @@
 package cli
 
 import agent.AgentSettings
+import chat.ChatMessage
+import chat.Role
 import formatting.Ansi
 import formatting.MarkdownConsoleFormatter
 
@@ -31,6 +33,16 @@ class ConsoleRenderer(
         println(Ansi.style("Ассистент:", Ansi.BOLD, Ansi.MAGENTA))
         println(formatter.format(text))
         println()
+    }
+
+    fun renderHistory(messages: List<ChatMessage>) {
+        messages.forEach { message ->
+            when (message.role) {
+                Role.USER -> renderUser(message.content)
+                Role.ASSISTANT -> renderAssistant(message.content)
+                Role.SYSTEM -> Unit
+            }
+        }
     }
 
     fun renderSystem(text: String) {
