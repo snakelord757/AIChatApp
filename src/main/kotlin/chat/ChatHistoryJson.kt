@@ -3,7 +3,13 @@ package chat
 internal object ChatHistoryJson {
     fun encodeMessages(messages: List<ChatMessage>): String {
         val body = messages.joinToString(separator = ",\n") { message ->
-            """  {"role":"${escape(message.role.apiName)}","content":"${escape(message.content)}"}"""
+            val usage = message.usage
+            val usageJson = if (usage == null) {
+                ""
+            } else {
+                ""","usage":{"inputTokens":${usage.inputTokens},"outputTokens":${usage.outputTokens},"reasoningTokens":${usage.reasoningTokens}}"""
+            }
+            """  {"role":"${escape(message.role.apiName)}","content":"${escape(message.content)}"$usageJson}"""
         }
         return "[\n$body\n]"
     }
@@ -67,6 +73,7 @@ internal object ChatHistoryJson {
         private fun parseMessage(): ChatMessage {
             var role: Role? = null
             var content: String? = null
+            var usage: TokenUsage? = null
 
             expect('{')
             skipWhitespace()
@@ -77,10 +84,14 @@ internal object ChatHistoryJson {
                 skipWhitespace()
                 expect(':')
                 skipWhitespace()
-                val value = parseString()
                 when (name) {
-                    "role" -> role = Role.entries.firstOrNull { it.apiName == value }
-                    "content" -> content = value
+                    "role" -> {
+                        val value = parseString()
+                        role = Role.entries.firstOrNull { it.apiName == value }
+                    }
+                    "content" -> content = parseString()
+                    "usage" -> usage = parseUsage()
+                    else -> skipValue()
                 }
                 skipWhitespace()
                 when (peek()) {
@@ -92,8 +103,47 @@ internal object ChatHistoryJson {
                         index++
                         return ChatMessage(
                             role ?: error("Message role is missing or unsupported"),
-                            content ?: error("Message content is missing")
+                            content ?: error("Message content is missing"),
+                            usage
                         )
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun parseUsage(): TokenUsage {
+            var inputTokens = 0L
+            var outputTokens = 0L
+            var reasoningTokens = 0L
+
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') {
+                index++
+                return TokenUsage.ZERO
+            }
+
+            while (true) {
+                val name = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                val value = parseNumber()
+                when (name) {
+                    "inputTokens" -> inputTokens = value
+                    "outputTokens" -> outputTokens = value
+                    "reasoningTokens" -> reasoningTokens = value
+                }
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return TokenUsage(inputTokens, outputTokens, reasoningTokens)
                     }
                     else -> error("Expected ',' or '}'")
                 }
@@ -111,6 +161,77 @@ internal object ChatHistoryJson {
                 }
             }
             error("Unterminated string")
+        }
+
+        private fun parseNumber(): Long {
+            val start = index
+            if (peek() == '-') index++
+            while (index < json.length && json[index].isDigit()) index++
+            if (start == index) error("Expected number")
+            return json.substring(start, index).toLongOrNull() ?: error("Invalid number")
+        }
+
+        private fun skipValue() {
+            when (peek()) {
+                '"' -> parseString()
+                '{' -> skipObject()
+                '[' -> skipArray()
+                else -> {
+                    while (index < json.length && json[index] !in setOf(',', '}', ']')) index++
+                }
+            }
+        }
+
+        private fun skipObject() {
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') {
+                index++
+                return
+            }
+            while (true) {
+                parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                skipValue()
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun skipArray() {
+            expect('[')
+            skipWhitespace()
+            if (peek() == ']') {
+                index++
+                return
+            }
+            while (true) {
+                skipValue()
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    ']' -> {
+                        index++
+                        return
+                    }
+                    else -> error("Expected ',' or ']'")
+                }
+            }
         }
 
         private fun parseEscape(): Char {

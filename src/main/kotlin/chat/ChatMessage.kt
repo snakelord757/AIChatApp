@@ -2,5 +2,6 @@ package chat
 
 data class ChatMessage(
     val role: Role,
-    val content: String
+    val content: String,
+    val usage: TokenUsage? = null
 )

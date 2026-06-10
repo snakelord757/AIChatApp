@@ -85,14 +85,41 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Resolve release tag
+        env:
+          INPUT_TAG_NAME: ${{ github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag_name="$INPUT_TAG_NAME"
+          else
+            tag_name="$GITHUB_REF_NAME"
+          fi
+
+          tag_name="$(printf '%s' "$tag_name" | xargs)"
+          tag_name="${tag_name#refs/tags/}"
+
+          if [ -z "$tag_name" ]; then
+            echo "::error::Release tag is empty. Use a tag like v1.0.0."
+            exit 1
+          fi
+
+          if ! printf '%s' "$tag_name" | grep -Eq '^v[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Release tag '$tag_name' is invalid. Use a tag like v1.0.0."
+            exit 1
+          fi
+
+          echo "TAG_NAME=$tag_name" >> "$GITHUB_ENV"
+          echo "Resolved release tag: $tag_name"
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ github.event.inputs.tag_name || github.ref_name }}
         run: |
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release-assets/* --clobber
           else
-            gh release create "$TAG_NAME" release-assets/* --title "AIChatApp $TAG_NAME" --generate-notes
+            gh release create "$TAG_NAME" release-assets/* --title "AIChatApp $TAG_NAME" --generate-notes --target "$GITHUB_SHA"
           fi

@@ -31,4 +31,17 @@ class ChatHistoryRepositoryTest {
         assertEquals(listOf(ChatMessage(Role.SYSTEM, "system")), repository.all())
         assertEquals(emptyList(), persisted.last())
     }
+
+    @Test
+    fun `total usage includes restored history`() {
+        val repository = ChatHistoryRepository(
+            systemPrompt = "system",
+            restoredMessages = listOf(
+                ChatMessage(Role.ASSISTANT, "old", TokenUsage(inputTokens = 1, outputTokens = 2, reasoningTokens = 3)),
+                ChatMessage(Role.ASSISTANT, "new", TokenUsage(inputTokens = 4, outputTokens = 5, reasoningTokens = 6))
+            )
+        )
+
+        assertEquals(TokenUsage(inputTokens = 5, outputTokens = 7, reasoningTokens = 9), repository.totalUsage())
+    }
 }

@@ -1,3 +1,3 @@
 fun main(args: Array<String>) {
-    cli.main(args)
+    cli.AiChatCli.run(args)
 }
