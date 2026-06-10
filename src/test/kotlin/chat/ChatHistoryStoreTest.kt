@@ -3,9 +3,11 @@ package chat
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class ChatHistoryStoreTest {
     @Test
@@ -32,6 +34,24 @@ class ChatHistoryStoreTest {
                     ),
                     store.read()
                 )
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `store writes and restores assistant token usage`() {
+        val directory = Files.createTempDirectory("aichat-history-usage-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            val usage = TokenUsage(inputTokens = 10, outputTokens = 20, reasoningTokens = 30)
+            ChatHistoryStore.open(path).use { store ->
+                store.write(listOf(ChatMessage(Role.ASSISTANT, "hi", usage)))
+            }
+
+            ChatHistoryStore.open(path).use { store ->
+                assertEquals(listOf(ChatMessage(Role.ASSISTANT, "hi", usage)), store.read())
             }
         } finally {
             directory.toFile().deleteRecursively()
@@ -72,5 +92,21 @@ class ChatHistoryStoreTest {
         } finally {
             directory.toFile().deleteRecursively()
         }
+    }
+
+    @Test
+    fun `default history path is not derived from java executable directory`() {
+        val defaultPath = ChatHistoryStore.defaultHistoryPath().toAbsolutePath().normalize()
+        val configuredPath = System.getProperty("aichat.history.dir")?.takeIf { it.isNotBlank() }
+            ?: System.getenv("APP_HOME")?.takeIf { it.isNotBlank() }
+        val userHome = Paths.get(System.getProperty("user.home")).toAbsolutePath().normalize()
+
+        val allowedBasePaths = listOfNotNull(
+            configuredPath?.let { Paths.get(it).toAbsolutePath().normalize() },
+            System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }?.let { Paths.get(it).toAbsolutePath().normalize() },
+            userHome
+        )
+
+        assertTrue(allowedBasePaths.any { defaultPath.startsWith(it) })
     }
 }

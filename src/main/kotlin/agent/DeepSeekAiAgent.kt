@@ -19,16 +19,11 @@ class DeepSeekAiAgent(
 ) : AiAgent {
     private var settings = initialSettings
 
-    override fun send(userMessage: String): String {
+    override fun send(userMessage: String): AgentResponse {
         historyRepository.addUser(userMessage)
         val history = historyRepository.all()
 
-        val request = HttpRequest.newBuilder(endpoint(settings.baseUrl))
-            .timeout(Duration.ofSeconds(60))
-            .header("Authorization", "Bearer ${settings.apiKey}")
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(history, settings)))
-            .build()
+        val request = buildRequest(history, settings)
 
         val response = try {
             httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
@@ -47,8 +42,9 @@ class DeepSeekAiAgent(
 
         val answer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek вернул пустой или неожиданный JSON-ответ.")
-        historyRepository.addAssistant(answer)
-        return answer
+        val usage = JsonTools.extractUsage(response.body())
+        historyRepository.addAssistant(answer, usage)
+        return AgentResponse(answer, usage)
     }
 
     override fun updateSettings(settings: AgentSettings) {
@@ -60,18 +56,37 @@ class DeepSeekAiAgent(
         return URI.create("$normalized/chat/completions")
     }
 
+    private fun buildRequest(history: List<ChatMessage>, settings: AgentSettings): HttpRequest =
+        HttpRequest.newBuilder(endpoint(settings.baseUrl))
+            .header("Authorization", "Bearer ${settings.apiKey}")
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(history, settings)))
+            .build()
+
     private fun buildRequestBody(history: List<ChatMessage>, settings: AgentSettings): String {
         val messages = history.joinToString(separator = ",") { message ->
             """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
         }
 
-        return """
-            {
-              "model": "${JsonTools.escape(settings.model)}",
-              "messages": [$messages],
-              "temperature": ${settings.temperature},
-              "max_tokens": ${settings.maxTokens}
-            }
-        """.trimIndent()
+        val thinkingType = if (settings.thinkingMode) "enabled" else "disabled"
+        val fields = mutableListOf(
+            """"model": "${JsonTools.escape(settings.model)}"""",
+            """"messages": [$messages]""",
+            """"thinking": {"type": "$thinkingType"}"""
+        )
+        if (settings.thinkingMode) {
+            fields += """"reasoning_effort": "high""""
+        } else {
+            fields += """"temperature": ${settings.temperature}"""
+        }
+        if (settings.maxTokens > 0) {
+            fields += """"max_tokens": ${settings.maxTokens}"""
+        }
+
+        return fields.joinToString(
+            separator = ",\n  ",
+            prefix = "{\n  ",
+            postfix = "\n}"
+        )
     }
 }
