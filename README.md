@@ -9,7 +9,8 @@ Create `local.properties` in the project root:
 ```properties
 DEEPSEEK_API_KEY=your_api_key_here
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TOKEN_PRICE_PER_1M_USD=0.28
 ```
 
 `local.properties` is ignored by Git. Do not commit real API keys.
@@ -42,7 +43,7 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/clear`, and `/exit`.
 
 ## JVM Distribution
 

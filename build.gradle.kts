@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.0.21"
+    kotlin("jvm") version "2.2.21"
     application
     id("org.graalvm.buildtools.native") version "1.1.1"
 }
@@ -37,6 +37,9 @@ application {
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
     systemProperty("aichat.ansi", "true")
+    System.getProperty("aichat.history.dir")?.takeIf { it.isNotBlank() }?.let {
+        systemProperty("aichat.history.dir", it)
+    }
     outputs.upToDateWhen { false }
 }
 

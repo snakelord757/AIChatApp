@@ -17,20 +17,23 @@ object ConsoleEncoding {
     }
 
     private fun detectOutputCharset(): Charset {
+        val console = System.console()
         return configuredCharset()
-            ?: utf8WindowsTerminalCharset()
-            ?: windowsCodePageCharset()
-            ?: System.console()?.charset()
+            ?: if (console == null) Charsets.UTF_8 else null
             ?: charsetFromProperty("sun.stdout.encoding")
+            ?: console?.charset()
+            ?: utf8WindowsTerminalCharset()
             ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
 
     private fun detectInputCharset(): Charset {
+        val console = System.console()
         return configuredCharset()
-            ?: utf8WindowsTerminalCharset()
+            ?: if (console == null) Charsets.UTF_8 else null
             ?: charsetFromProperty("sun.stdin.encoding")
-            ?: System.console()?.charset()
+            ?: console?.charset()
+            ?: utf8WindowsTerminalCharset()
             ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }

@@ -22,10 +22,13 @@ class ChatHistoryRepository(
         persist()
     }
 
-    fun addAssistant(content: String) {
-        messages += ChatMessage(Role.ASSISTANT, content)
+    fun addAssistant(content: String, usage: TokenUsage? = null) {
+        messages += ChatMessage(Role.ASSISTANT, content, usage)
         persist()
     }
+
+    fun totalUsage(): TokenUsage =
+        messages.mapNotNull { it.usage }.fold(TokenUsage.ZERO) { total, usage -> total + usage }
 
     fun clear(systemPrompt: String) {
         messages.clear()
