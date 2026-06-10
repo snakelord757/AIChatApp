@@ -28,6 +28,9 @@ object Ansi {
         val osName = System.getProperty("os.name").lowercase()
         if (!osName.contains("windows")) return true
 
-        return true
+        return System.getenv("WT_SESSION").isNullOrBlank().not()
+            || System.getenv("ANSICON").isNullOrBlank().not()
+            || System.getenv("ConEmuANSI") == "ON"
+            || System.getenv("TERM_PROGRAM").isNullOrBlank().not()
     }
 }

@@ -29,14 +29,10 @@ dependencies {
 application {
     applicationName = "aichat"
     mainClass.set("cli.AiChatCliKt")
-    applicationDefaultJvmArgs = listOf(
-        "-Daichat.ansi=true"
-    )
 }
 
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
-    systemProperty("aichat.ansi", "true")
     outputs.upToDateWhen { false }
 }
 
