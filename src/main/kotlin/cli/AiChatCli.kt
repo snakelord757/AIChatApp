@@ -2,7 +2,9 @@ package cli
 
 import agent.DeepSeekAiAgent
 import agent.MockAiAgent
+import chat.ChatHistoryBusyException
 import chat.ChatHistoryRepository
+import chat.ChatHistoryStore
 import config.LocalPropertiesConfig
 import formatting.ConsoleEncoding
 import formatting.ConsoleScreen
@@ -45,18 +47,29 @@ object AiChatCli {
 
         val renderer = ConsoleRenderer()
         val configResult = LocalPropertiesConfig.load()
-        val historyRepository = ChatHistoryRepository(
-            when (configResult) {
-                is LocalPropertiesConfig.Result.Success -> configResult.settings.systemPrompt
-                is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings.systemPrompt
-            }
-        )
+        val historyStore = try {
+            ChatHistoryStore.open()
+        } catch (exception: ChatHistoryBusyException) {
+            renderer.renderError(exception.message ?: "Не могу продолжить работу, т.к. файл истории чата занят другим процессом. История чата разблокируется при завершении работы программы через функцию exit или завершение процесса")
+            return
+        }
 
-        val (settings, agent) = when (configResult) {
-            is LocalPropertiesConfig.Result.Success -> configResult.settings to DeepSeekAiAgent(
-                historyRepository = historyRepository,
-                initialSettings = configResult.settings
+        try {
+            val restoredMessages = historyStore.read()
+            val historyRepository = ChatHistoryRepository(
+                systemPrompt = when (configResult) {
+                    is LocalPropertiesConfig.Result.Success -> configResult.settings.systemPrompt
+                    is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings.systemPrompt
+                },
+                restoredMessages = restoredMessages,
+                onChanged = historyStore::write
             )
+
+            val (settings, agent) = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> configResult.settings to DeepSeekAiAgent(
+                    historyRepository = historyRepository,
+                    initialSettings = configResult.settings
+                )
             is LocalPropertiesConfig.Result.Failure -> {
                 renderer.renderError(configResult.message)
                 renderer.renderSystem("Реальный ключ не найден, поэтому запущен локальный демонстрационный режим без обращения к DeepSeek.")
@@ -67,12 +80,15 @@ object AiChatCli {
             }
         }
 
-        ChatApplication(
-            agent = agent,
-            initialSettings = settings,
-            historyRepository = historyRepository,
-            renderer = renderer
-        ).run()
+            ChatApplication(
+                agent = agent,
+                initialSettings = settings,
+                historyRepository = historyRepository,
+                renderer = renderer
+            ).run()
+        } finally {
+            historyStore.close()
+        }
     }
 }
 
