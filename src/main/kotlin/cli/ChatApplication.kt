@@ -4,6 +4,7 @@ import agent.AgentException
 import agent.AgentSettings
 import agent.AiAgent
 import agent.ResponseLimitReason
+import agent.SummaryEvents
 import chat.ChatHistoryRepository
 import config.TokenPricing
 import formatting.ConsoleScreen
@@ -67,7 +68,16 @@ class ChatApplication(
 
         try {
             renderer.renderSystem("Отправляю запрос ассистенту...")
-            val response = agent.send(input)
+            val response = agent.send(input, object : SummaryEvents {
+                override fun onSummaryStarted() {
+                    renderer.renderSystem("Начинается сжатие диалога")
+                }
+
+                override fun onSummaryUsage(usage: chat.TokenUsage) {
+                    renderer.renderUsage(usage)
+                    renderer.renderCost(usage, pricing)
+                }
+            })
             renderer.renderAssistant(response.content)
             if (response.wasLimited) {
                 renderer.renderWarning(limitWarning(response.limitReason))
