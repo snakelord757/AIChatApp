@@ -1,6 +1,5 @@
 package formatting
 
-import java.io.PrintStream
 import java.nio.charset.Charset
 
 object ConsoleEncoding {
@@ -20,9 +19,10 @@ object ConsoleEncoding {
         val console = System.console()
         return configuredCharset()
             ?: if (console == null) Charsets.UTF_8 else null
-            ?: charsetFromProperty("sun.stdout.encoding")
-            ?: console?.charset()
             ?: utf8WindowsTerminalCharset()
+            ?: windowsCodePageCharset()
+            ?: console.charset()
+            ?: charsetFromProperty("sun.stdout.encoding")
             ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
@@ -31,9 +31,9 @@ object ConsoleEncoding {
         val console = System.console()
         return configuredCharset()
             ?: if (console == null) Charsets.UTF_8 else null
-            ?: charsetFromProperty("sun.stdin.encoding")
-            ?: console?.charset()
             ?: utf8WindowsTerminalCharset()
+            ?: charsetFromProperty("sun.stdin.encoding")
+            ?: console.charset()
             ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }

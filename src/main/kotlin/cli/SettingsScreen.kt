@@ -12,29 +12,29 @@ class SettingsScreen(
         renderHeader(settings)
 
         while (true) {
-            print("настройки> ")
+            print("settings> ")
             val userInput = input.readLine()?.trimSettingsInput() ?: return settings
             if (userInput.isBlank()) {
-                renderer.renderSystem("Введите команду настроек.")
+                renderer.renderSystem("Enter a settings command.")
                 continue
             }
 
             val parts = userInput.split(Regex("\\s+"), limit = 3)
             when (parts.first().lowercase()) {
-                "показать", "show" -> renderer.renderSettings(settings)
-                "помощь", "help" -> renderHelp()
-                "назад", "back", "выход", "exit" -> {
-                    renderer.renderSystem("Возврат в чат.")
+                "show" -> renderer.renderSettings(settings)
+                "help" -> renderHelp()
+                "back", "exit" -> {
+                    renderer.renderSystem("Returning to chat.")
                     return settings
                 }
-                "установить", "set" -> {
+                "set" -> {
                     if (parts.size < 3) {
-                        renderer.renderError("Формат: set <ключ> <значение>")
+                        renderer.renderError("Usage: set <key> <value>")
                     } else {
                         settings = update(settings, parts[1], parts[2])
                     }
                 }
-                else -> renderer.renderError("Неизвестная команда настроек. Введите help.")
+                else -> renderer.renderError("Unknown settings command. Enter help.")
             }
         }
     }
@@ -45,58 +45,58 @@ class SettingsScreen(
     }
 
     private fun renderHelp() {
-        println("Команды настроек:")
-        println("show / показать - показать текущие настройки")
-        println("set model <deepseek-v4-flash|deepseek-v4-pro> - изменить модель")
-        println("set thinking <on|off> - включить или отключить thinking mode")
-        println("set temperature <0..2> - изменить температуру")
-        println("set maxTokens <число> - изменить максимум токенов; <= 0 - без ограничений")
-        println("set summaryInterval <число> - изменить интервал автоматического summary")
-        println("set systemPrompt <текст> - изменить системный промпт")
-        println("set baseUrl <url> - изменить базовый URL")
-        println("back / назад - вернуться в чат")
+        println("Settings commands:")
+        println("show - show current settings")
+        println("set model <deepseek-v4-flash|deepseek-v4-pro> - change the model")
+        println("set thinking <on|off> - enable or disable thinking mode")
+        println("set temperature <0..2> - change the temperature")
+        println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
+        println("set summaryInterval <number> - change the automatic summary interval")
+        println("set systemPrompt <text> - change the system prompt")
+        println("set baseUrl <url> - change the base URL")
+        println("back - return to chat")
     }
 
     private fun update(settings: AgentSettings, rawKey: String, value: String): AgentSettings {
         return when (rawKey.lowercase()) {
-            "model", "модель" -> {
+            "model" -> {
                 val model = value.trim()
                 if (model !in AgentSettings.supportedModels) invalid(settings) else settings.copy(model = model)
             }
-            "thinking", "thinkingmode", "размышление" -> {
+            "thinking", "thinkingmode" -> {
                 when (value.trim().lowercase()) {
-                    "on", "true", "enabled", "1", "вкл", "включить" -> settings.copy(thinkingMode = true)
-                    "off", "false", "disabled", "0", "выкл", "отключить" -> settings.copy(thinkingMode = false)
+                    "on", "true", "enabled", "1" -> settings.copy(thinkingMode = true)
+                    "off", "false", "disabled", "0" -> settings.copy(thinkingMode = false)
                     else -> invalid(settings)
                 }
             }
-            "temperature", "температура" -> {
+            "temperature" -> {
                 val temperature = value.toDoubleOrNull()
                 if (temperature == null || temperature !in 0.0..2.0) invalid(settings) else settings.copy(temperature = temperature)
             }
-            "maxtokens", "max_tokens", "токены" -> {
+            "maxtokens", "max_tokens" -> {
                 val maxTokens = value.toIntOrNull()
                 if (maxTokens == null) invalid(settings) else settings.copy(maxTokens = maxTokens)
             }
-            "summaryinterval", "summary_interval", "summary", "интервал" -> {
+            "summaryinterval", "summary_interval", "summary" -> {
                 val interval = value.toIntOrNull()
                 if (interval == null || interval <= 0) invalid(settings) else settings.copy(summaryInterval = interval)
             }
-            "systemprompt", "prompt", "промпт" -> {
+            "systemprompt", "prompt" -> {
                 if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)
             }
             "baseurl", "url" -> {
                 if (!isValidUrl(value)) invalid(settings) else settings.copy(baseUrl = value.trim().trimEnd('/'))
             }
             else -> {
-                renderer.renderError("Неизвестная настройка: $rawKey")
+                renderer.renderError("Unknown setting: $rawKey")
                 settings
             }
         }
     }
 
     private fun invalid(current: AgentSettings): AgentSettings {
-        renderer.renderError("Некорректное значение настройки.")
+        renderer.renderError("Invalid setting value.")
         return current
     }
 

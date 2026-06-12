@@ -33,7 +33,7 @@ object LocalPropertiesConfig {
 
         if (!Files.exists(configPath)) {
             return Result.Failure(
-                missingMessage("Файл local.properties не найден."),
+                missingMessage("local.properties was not found."),
                 fallback,
                 pricing = null,
                 pricingWarning = pricingWarning()
@@ -48,7 +48,7 @@ object LocalPropertiesConfig {
         val apiKey = properties.getProperty("DEEPSEEK_API_KEY")?.trim().orEmpty()
         if (apiKey.isBlank() || apiKey == "your_api_key_here") {
             return Result.Failure(
-                missingMessage("В local.properties не задан обязательный DEEPSEEK_API_KEY."),
+                missingMessage("local.properties does not define the required DEEPSEEK_API_KEY."),
                 fallback,
                 pricing,
                 pricingWarning
@@ -68,7 +68,7 @@ object LocalPropertiesConfig {
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
-                missingMessage("В local.properties задан некорректный DEEPSEEK_BASE_URL: $baseUrl"),
+                missingMessage("local.properties defines an invalid DEEPSEEK_BASE_URL: $baseUrl"),
                 fallback,
                 pricing,
                 pricingWarning
@@ -107,7 +107,7 @@ object LocalPropertiesConfig {
         getProperty(key)?.trim()?.takeIf { it.isNotBlank() }?.toDoubleOrNull()?.takeIf { it >= 0.0 }
 
     private fun pricingWarning(): String =
-        "Цена токенов не настроена в local.properties. Добавьте DEEPSEEK_TOKEN_PRICE_PER_1M_USD или DEEPSEEK_INPUT_PRICE_PER_1M_USD/DEEPSEEK_OUTPUT_PRICE_PER_1M_USD."
+        "Token pricing is not configured in local.properties. Add DEEPSEEK_TOKEN_PRICE_PER_1M_USD or DEEPSEEK_INPUT_PRICE_PER_1M_USD/DEEPSEEK_OUTPUT_PRICE_PER_1M_USD."
 
     private fun isValidUrl(value: String): Boolean = try {
         val uri = URI(value.trim())
@@ -118,9 +118,9 @@ object LocalPropertiesConfig {
 
     private fun missingMessage(reason: String): String = """
         $reason
-        Ожидаемый путь: $configPath
-        Обязательное свойство: DEEPSEEK_API_KEY
-        Пример формата:
+        Expected path: $configPath
+        Required property: DEEPSEEK_API_KEY
+        Example format:
         DEEPSEEK_API_KEY=your_api_key_here
         DEEPSEEK_BASE_URL=https://api.deepseek.com
         DEEPSEEK_MODEL=deepseek-v4-flash

@@ -10,6 +10,8 @@ object ConsoleSystemPrompt {
         For tables, use simple Markdown pipe tables with a header row, a separator row, spaces around pipes, and short single-line cell values. Do not use compact tables without padding.
         Avoid HTML and unsupported markup.
         Keep responses concise, readable, and structured.
-        Prefer Russian when responding to the user, unless the user asks for another language.
+        Reply in English when the user's message starts in English.
+        If the user's message starts in any other language, continue in that language.
+        Keep application commands, labels, and UI references in English.
     """.trimIndent()
 }

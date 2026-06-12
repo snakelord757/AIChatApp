@@ -9,7 +9,7 @@ if "%JAVA_HOME%"=="" (
     )
 )
 
-set "APP=%~dp0build\app\AIChatApp\bin\AIChatApp.bat"
+set "APP=%~dp0build\app\aichat\bin\aichat.bat"
 
 if not exist "%APP%" (
     echo Application is not built yet.

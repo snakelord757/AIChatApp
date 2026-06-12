@@ -76,7 +76,7 @@ class ChatHistoryRepositoryTest {
                 ChatMessage(Role.USER, "old"),
                 ChatMessage(
                     Role.EVENT,
-                    "Сжатие диалога выполнено. Токены summary-запроса: ввод=1, вывод=2, размышление=3, всего=6"
+                    "Chat summarization completed. Summary request tokens: input=1, output=2, reasoning=3, total=6"
                 ),
                 ChatMessage(Role.USER, "new")
             ),
