@@ -59,6 +59,111 @@ class ChatHistoryStoreTest {
     }
 
     @Test
+    fun `store writes and restores summary state`() {
+        val directory = Files.createTempDirectory("aichat-history-summary-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            val state = ChatHistoryState(
+                messages = listOf(
+                    ChatMessage(Role.SYSTEM, "system"),
+                    ChatMessage(Role.USER, "hello")
+                ),
+                summary = ChatSummary(
+                    content = "compressed",
+                    lastMessageIndex = 1,
+                    usage = TokenUsage(inputTokens = 10, outputTokens = 20, reasoningTokens = 30)
+                )
+            )
+            ChatHistoryStore.open(path).use { store ->
+                store.writeState(state)
+            }
+
+            ChatHistoryStore.open(path).use { store ->
+                assertEquals(
+                    state.copy(
+                        messages = listOf(
+                            ChatMessage(Role.SYSTEM, "system"),
+                            ChatMessage(Role.USER, "hello"),
+                            ChatMessage(
+                                Role.EVENT,
+                                "Сжатие диалога выполнено. Токены summary-запроса: ввод=10, вывод=20, размышление=30, всего=60"
+                            )
+                        )
+                    ),
+                    store.readState()
+                )
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `store adds missing summary usage event for existing summary state`() {
+        val directory = Files.createTempDirectory("aichat-history-summary-event-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            val summary = ChatSummary(
+                content = "compressed",
+                lastMessageIndex = 1,
+                usage = TokenUsage(inputTokens = 1, outputTokens = 2, reasoningTokens = 3)
+            )
+            Files.writeString(
+                path,
+                ChatHistoryJson.encodeState(
+                    ChatHistoryState(
+                        messages = listOf(
+                            ChatMessage(Role.SYSTEM, "system"),
+                            ChatMessage(Role.USER, "hello"),
+                            ChatMessage(Role.USER, "tail")
+                        ),
+                        summary = summary
+                    )
+                ),
+                StandardCharsets.UTF_8
+            )
+
+            ChatHistoryStore.open(path).use { store ->
+                assertEquals(
+                    ChatHistoryState(
+                        messages = listOf(
+                            ChatMessage(Role.SYSTEM, "system"),
+                            ChatMessage(Role.USER, "hello"),
+                            ChatMessage(
+                                Role.EVENT,
+                                "Сжатие диалога выполнено. Токены summary-запроса: ввод=1, вывод=2, размышление=3, всего=6"
+                            ),
+                            ChatMessage(Role.USER, "tail")
+                        ),
+                        summary = summary
+                    ),
+                    store.readState()
+                )
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `store restores legacy message array as state without summary`() {
+        val directory = Files.createTempDirectory("aichat-history-legacy-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            val messages = listOf(ChatMessage(Role.USER, "hello"))
+            ChatHistoryStore.open(path).use { store ->
+                store.write(messages)
+            }
+
+            ChatHistoryStore.open(path).use { store ->
+                assertEquals(ChatHistoryState(messages = messages), store.readState())
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `store rejects second lock owner`() {
         val directory = Files.createTempDirectory("aichat-history-lock-test")
         try {

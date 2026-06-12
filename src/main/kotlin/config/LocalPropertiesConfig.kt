@@ -60,6 +60,11 @@ object LocalPropertiesConfig {
         val model = properties.getProperty("DEEPSEEK_MODEL")?.trim()?.takeIf { it.isNotBlank() }
             ?.takeIf { it in AgentSettings.supportedModels }
             ?: AgentSettings.defaultModel
+        val summaryInterval = properties.getProperty("AI_CHAT_SUMMARY_INTERVAL")
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: fallback.summaryInterval
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -74,7 +79,8 @@ object LocalPropertiesConfig {
             fallback.copy(
                 apiKey = apiKey,
                 baseUrl = baseUrl.trimEnd('/'),
-                model = model
+                model = model,
+                summaryInterval = summaryInterval
             ),
             pricing,
             pricingWarning

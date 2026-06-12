@@ -51,6 +51,7 @@ class SettingsScreen(
         println("set thinking <on|off> - включить или отключить thinking mode")
         println("set temperature <0..2> - изменить температуру")
         println("set maxTokens <число> - изменить максимум токенов; <= 0 - без ограничений")
+        println("set summaryInterval <число> - изменить интервал автоматического summary")
         println("set systemPrompt <текст> - изменить системный промпт")
         println("set baseUrl <url> - изменить базовый URL")
         println("back / назад - вернуться в чат")
@@ -76,6 +77,10 @@ class SettingsScreen(
             "maxtokens", "max_tokens", "токены" -> {
                 val maxTokens = value.toIntOrNull()
                 if (maxTokens == null) invalid(settings) else settings.copy(maxTokens = maxTokens)
+            }
+            "summaryinterval", "summary_interval", "summary", "интервал" -> {
+                val interval = value.toIntOrNull()
+                if (interval == null || interval <= 0) invalid(settings) else settings.copy(summaryInterval = interval)
             }
             "systemprompt", "prompt", "промпт" -> {
                 if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)
