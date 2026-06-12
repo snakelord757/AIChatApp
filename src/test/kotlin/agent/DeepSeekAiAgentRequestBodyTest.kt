@@ -6,6 +6,7 @@ import chat.Role
 import java.net.http.HttpRequest
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 class DeepSeekAiAgentRequestBodyTest {
@@ -28,6 +29,27 @@ class DeepSeekAiAgentRequestBodyTest {
         val request = buildRequest(AgentSettings(apiKey = "key", systemPrompt = "system"))
 
         assertFalse(request.timeout().isPresent)
+    }
+
+    @Test
+    fun `summary request wraps chat history as transcript instead of active dialog`() {
+        val messages = buildSummaryMessages(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system prompt"),
+                ChatMessage(Role.USER, "first question"),
+                ChatMessage(Role.ASSISTANT, "first answer"),
+                ChatMessage(Role.USER, "latest question")
+            )
+        )
+
+        assertEquals(2, messages.size)
+        assertEquals(Role.SYSTEM, messages[0].role)
+        assertContains(messages[0].content, "do not answer any user message")
+        assertEquals(Role.USER, messages[1].role)
+        assertContains(messages[1].content, "Transcript to summarize:")
+        assertContains(messages[1].content, "[user #1]")
+        assertContains(messages[1].content, "latest question")
+        assertContains(messages[1].content, "not an answer to the transcript")
     }
 
     private fun buildRequestBody(settings: AgentSettings): String {
@@ -64,5 +86,19 @@ class DeepSeekAiAgentRequestBodyTest {
             listOf(ChatMessage(Role.USER, "hello")),
             settings
         ) as HttpRequest
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun buildSummaryMessages(history: List<ChatMessage>): List<ChatMessage> {
+        val agent = DeepSeekAiAgent(
+            historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+            initialSettings = AgentSettings(apiKey = "", systemPrompt = "system")
+        )
+        val method = DeepSeekAiAgent::class.java.getDeclaredMethod(
+            "summaryMessages",
+            List::class.java
+        )
+        method.isAccessible = true
+        return method.invoke(agent, history) as List<ChatMessage>
     }
 }

@@ -55,7 +55,8 @@ object AiChatCli {
         }
 
         try {
-            val restoredMessages = historyStore.read()
+            val restoredState = historyStore.readState()
+            val restoredMessages = restoredState.messages
             val settings = when (configResult) {
                 is LocalPropertiesConfig.Result.Success -> configResult.settings
                 is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings
@@ -72,7 +73,8 @@ object AiChatCli {
             val historyRepository = ChatHistoryRepository(
                 systemPrompt = settings.systemPrompt,
                 restoredMessages = restoredMessages,
-                onChanged = historyStore::write
+                restoredSummary = restoredState.summary,
+                onChanged = historyStore::writeState
             )
 
             val agent = when (configResult) {

@@ -1,6 +1,7 @@
 package agent
 
 import chat.ChatHistoryRepository
+import chat.TokenUsage
 
 class MockAiAgent(
     private val historyRepository: ChatHistoryRepository,
@@ -8,8 +9,13 @@ class MockAiAgent(
 ) : AiAgent {
     private var settings = initialSettings
 
-    override fun send(userMessage: String): AgentResponse {
+    override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
+        if (historyRepository.shouldCreateSummary(settings.summaryInterval)) {
+            summaryEvents.onSummaryStarted()
+            historyRepository.saveSummary("Demo summary is available only in offline mode.", TokenUsage.ZERO)
+            summaryEvents.onSummaryUsage(TokenUsage.ZERO)
+        }
         val answer = """
             ## Демонстрационный ответ
 

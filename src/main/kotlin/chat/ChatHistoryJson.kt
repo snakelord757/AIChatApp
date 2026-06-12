@@ -1,6 +1,22 @@
 package chat
 
 internal object ChatHistoryJson {
+    fun encodeState(state: ChatHistoryState): String {
+        val summary = state.summary
+        val summaryJson = if (summary == null) {
+            "null"
+        } else {
+            val usage = summary.usage
+            val usageJson = if (usage == null) {
+                ""
+            } else {
+                ""","usage":{"inputTokens":${usage.inputTokens},"outputTokens":${usage.outputTokens},"reasoningTokens":${usage.reasoningTokens}}"""
+            }
+            """{"content":"${escape(summary.content)}","lastMessageIndex":${summary.lastMessageIndex}$usageJson}"""
+        }
+        return "{\n  \"messages\": ${encodeMessages(state.messages)},\n  \"summary\": $summaryJson\n}"
+    }
+
     fun encodeMessages(messages: List<ChatMessage>): String {
         val body = messages.joinToString(separator = ",\n") { message ->
             val usage = message.usage
@@ -17,6 +33,11 @@ internal object ChatHistoryJson {
     fun decodeMessages(json: String): List<ChatMessage> {
         val parser = Parser(json)
         return parser.parseMessages()
+    }
+
+    fun decodeState(json: String): ChatHistoryState {
+        val parser = Parser(json)
+        return parser.parseState()
     }
 
     private fun escape(value: String): String = buildString {
@@ -66,6 +87,115 @@ internal object ChatHistoryJson {
                         return messages
                     }
                     else -> error("Expected ',' or ']'")
+                }
+            }
+        }
+
+        fun parseState(): ChatHistoryState {
+            skipWhitespace()
+            if (peek() == '[') return ChatHistoryState(parseMessages(), summary = null)
+
+            var messages: List<ChatMessage> = emptyList()
+            var summary: ChatSummary? = null
+
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') {
+                index++
+                requireEnd()
+                return ChatHistoryState()
+            }
+
+            while (true) {
+                val name = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                when (name) {
+                    "messages" -> messages = parseMessagesArrayOnly()
+                    "summary" -> summary = parseNullableSummary()
+                    else -> skipValue()
+                }
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        skipWhitespace()
+                        requireEnd()
+                        return ChatHistoryState(messages, summary)
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun parseMessagesArrayOnly(): List<ChatMessage> {
+            val messages = mutableListOf<ChatMessage>()
+            expect('[')
+            skipWhitespace()
+            if (peek() == ']') {
+                index++
+                return emptyList()
+            }
+
+            while (true) {
+                messages += parseMessage()
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    ']' -> {
+                        index++
+                        return messages
+                    }
+                    else -> error("Expected ',' or ']'")
+                }
+            }
+        }
+
+        private fun parseNullableSummary(): ChatSummary? {
+            if (consumeLiteral("null")) return null
+
+            var content: String? = null
+            var lastMessageIndex: Int? = null
+            var usage: TokenUsage? = null
+
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') error("Summary object must not be empty")
+
+            while (true) {
+                val name = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                when (name) {
+                    "content" -> content = parseString()
+                    "lastMessageIndex" -> lastMessageIndex = parseNumber().toInt()
+                    "usage" -> usage = parseUsage()
+                    else -> skipValue()
+                }
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return ChatSummary(
+                            content ?: error("Summary content is missing"),
+                            lastMessageIndex ?: error("Summary lastMessageIndex is missing"),
+                            usage
+                        )
+                    }
+                    else -> error("Expected ',' or '}'")
                 }
             }
         }
@@ -169,6 +299,13 @@ internal object ChatHistoryJson {
             while (index < json.length && json[index].isDigit()) index++
             if (start == index) error("Expected number")
             return json.substring(start, index).toLongOrNull() ?: error("Invalid number")
+        }
+
+        private fun consumeLiteral(value: String): Boolean {
+            if (!json.regionMatches(index, value, 0, value.length)) return false
+            index += value.length
+            skipWhitespace()
+            return true
         }
 
         private fun skipValue() {
