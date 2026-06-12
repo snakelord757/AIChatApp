@@ -86,7 +86,7 @@ class ChatHistoryStoreTest {
                             ChatMessage(Role.USER, "hello"),
                             ChatMessage(
                                 Role.EVENT,
-                                "Сжатие диалога выполнено. Токены summary-запроса: ввод=10, вывод=20, размышление=30, всего=60"
+                                "Chat summarization completed. Summary request tokens: input=10, output=20, reasoning=30, total=60"
                             )
                         )
                     ),
@@ -131,7 +131,7 @@ class ChatHistoryStoreTest {
                             ChatMessage(Role.USER, "hello"),
                             ChatMessage(
                                 Role.EVENT,
-                                "Сжатие диалога выполнено. Токены summary-запроса: ввод=1, вывод=2, размышление=3, всего=6"
+                                "Chat summarization completed. Summary request tokens: input=1, output=2, reasoning=3, total=6"
                             ),
                             ChatMessage(Role.USER, "tail")
                         ),

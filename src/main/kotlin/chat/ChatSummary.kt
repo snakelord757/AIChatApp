@@ -13,5 +13,5 @@ data class ChatHistoryState(
 
 internal fun summaryUsageMessage(usage: TokenUsage?): String {
     val safeUsage = usage ?: TokenUsage.ZERO
-    return "Сжатие диалога выполнено. Токены summary-запроса: ввод=${safeUsage.inputTokens}, вывод=${safeUsage.outputTokens}, размышление=${safeUsage.reasoningTokens}, всего=${safeUsage.totalTokens}"
+    return "Chat summarization completed. Summary request tokens: input=${safeUsage.inputTokens}, output=${safeUsage.outputTokens}, reasoning=${safeUsage.reasoningTokens}, total=${safeUsage.totalTokens}"
 }

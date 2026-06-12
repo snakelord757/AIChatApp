@@ -107,14 +107,7 @@ Run the native CLI directly:
 .\build\native\nativeCompile\aichat.exe chat
 ```
 
-On Windows, the app detects the current console code page and uses that encoding for input and output. If your terminal still renders text incorrectly, override it explicitly:
-
-```powershell
-$env:AICHAT_CHARSET="cp866"
-.\build\native\nativeCompile\aichat.exe chat
-```
-
-For UTF-8 terminals, use:
+By default, non-console streams use UTF-8 and attached consoles use the JVM-reported console charset. You can override the charset explicitly when needed:
 
 ```powershell
 $env:AICHAT_CHARSET="UTF-8"

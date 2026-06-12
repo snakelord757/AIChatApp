@@ -1,6 +1,5 @@
 package formatting
 
-import java.io.PrintStream
 import java.nio.charset.Charset
 
 object ConsoleEncoding {
@@ -22,8 +21,6 @@ object ConsoleEncoding {
             ?: if (console == null) Charsets.UTF_8 else null
             ?: charsetFromProperty("sun.stdout.encoding")
             ?: console?.charset()
-            ?: utf8WindowsTerminalCharset()
-            ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
 
@@ -33,8 +30,6 @@ object ConsoleEncoding {
             ?: if (console == null) Charsets.UTF_8 else null
             ?: charsetFromProperty("sun.stdin.encoding")
             ?: console?.charset()
-            ?: utf8WindowsTerminalCharset()
-            ?: windowsCodePageCharset()
             ?: Charset.defaultCharset()
     }
 
@@ -50,34 +45,5 @@ object ConsoleEncoding {
     private fun charsetFromValue(rawValue: String?): Charset? {
         val value = rawValue?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { Charset.forName(value) }.getOrNull()
-    }
-
-    private fun windowsCodePageCharset(): Charset? {
-        if (!isWindows()) return null
-
-        val detected = runCatching {
-            val output = ProcessBuilder("cmd.exe", "/c", "chcp")
-                .redirectErrorStream(true)
-                .start()
-                .inputStream
-                .bufferedReader()
-                .readText()
-            when (val codePage = Regex("""\d+""").find(output)?.value) {
-                "65001" -> Charsets.UTF_8
-                null -> null
-                else -> Charset.forName("cp$codePage")
-            }
-        }.getOrNull()
-
-        return detected ?: charsetFromValue("cp866")
-    }
-
-    private fun utf8WindowsTerminalCharset(): Charset? {
-        if (!isWindows()) return null
-        return if (System.getenv("WT_SESSION").isNullOrBlank()) null else Charsets.UTF_8
-    }
-
-    private fun isWindows(): Boolean {
-        return System.getProperty("os.name").contains("windows", ignoreCase = true)
     }
 }

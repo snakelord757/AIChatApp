@@ -13,28 +13,28 @@ class ConsoleRenderer(
     private val formatter: MarkdownConsoleFormatter = MarkdownConsoleFormatter()
 ) {
     fun renderGreeting() {
-        println(Ansi.style("AIChatApp: CLI-чат с DeepSeek", Ansi.BOLD, Ansi.CYAN))
-        println("Введите сообщение или команду. Доступные команды:")
+        println(Ansi.style("AIChatApp: DeepSeek CLI chat", Ansi.BOLD, Ansi.CYAN))
+        println("Enter a message or command. Available commands:")
         renderHelp()
     }
 
     fun renderHelp() {
-        println("${Ansi.style("/help", Ansi.CYAN)} - показать помощь")
-        println("${Ansi.style("/settings", Ansi.CYAN)} - открыть настройки")
-        println("${Ansi.style("/summary", Ansi.CYAN)} - показать токены и стоимость всей истории чата")
-        println("${Ansi.style("/clear", Ansi.CYAN)} - очистить историю текущей сессии")
-        println("${Ansi.style("/exit", Ansi.CYAN)} - выйти")
+        println("${Ansi.style("/help", Ansi.CYAN)} - show help")
+        println("${Ansi.style("/settings", Ansi.CYAN)} - open settings")
+        println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
+        println("${Ansi.style("/clear", Ansi.CYAN)} - clear the current session history")
+        println("${Ansi.style("/exit", Ansi.CYAN)} - exit")
     }
 
     fun renderUser(text: String) {
         println()
-        println(Ansi.style("Вы:", Ansi.BOLD, Ansi.GREEN))
+        println(Ansi.style("You:", Ansi.BOLD, Ansi.GREEN))
         println(text)
     }
 
     fun renderAssistant(text: String) {
         println()
-        println(Ansi.style("Ассистент:", Ansi.BOLD, Ansi.MAGENTA))
+        println(Ansi.style("Assistant:", Ansi.BOLD, Ansi.MAGENTA))
         println(formatter.format(text))
         println()
     }
@@ -51,30 +51,30 @@ class ConsoleRenderer(
     }
 
     fun renderSystem(text: String) {
-        println(Ansi.style("Система: $text", Ansi.BLUE))
+        println(Ansi.style("System: $text", Ansi.BLUE))
     }
 
     fun renderWarning(text: String) {
-        println(Ansi.style("Предупреждение: $text", Ansi.YELLOW, Ansi.BOLD))
+        println(Ansi.style("Warning: $text", Ansi.YELLOW, Ansi.BOLD))
     }
 
     fun renderError(text: String) {
-        println(Ansi.style("Ошибка: $text", Ansi.RED, Ansi.BOLD))
+        println(Ansi.style("Error: $text", Ansi.RED, Ansi.BOLD))
     }
 
     fun renderSettings(settings: AgentSettings) {
-        println(Ansi.style("Настройки агента", Ansi.BOLD, Ansi.CYAN))
-        println("Модель: ${settings.model}")
-        println("Thinking mode: ${if (settings.thinkingMode) "включен" else "выключен"}")
-        println("Температура: ${settings.temperature}")
-        println("Максимум токенов: ${if (settings.maxTokens > 0) settings.maxTokens else "без ограничений"}")
+        println(Ansi.style("Agent Settings", Ansi.BOLD, Ansi.CYAN))
+        println("Model: ${settings.model}")
+        println("Thinking mode: ${if (settings.thinkingMode) "enabled" else "disabled"}")
+        println("Temperature: ${settings.temperature}")
+        println("Max tokens: ${if (settings.maxTokens > 0) settings.maxTokens else "unlimited"}")
         println("Summary interval: ${settings.summaryInterval}")
-        println("Базовый URL: ${settings.baseUrl}")
-        println("Системный промпт: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
+        println("Base URL: ${settings.baseUrl}")
+        println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }
 
     fun renderUsage(usage: TokenUsage) {
-        println("Токены: ввод=${usage.inputTokens}, вывод=${usage.outputTokens}, размышление=${usage.reasoningTokens}, всего=${usage.totalTokens}")
+        println("Tokens: input=${usage.inputTokens}, output=${usage.outputTokens}, reasoning=${usage.reasoningTokens}, total=${usage.totalTokens}")
     }
 
     fun renderFinishReason(finishReason: String?) {
@@ -86,15 +86,15 @@ class ConsoleRenderer(
     fun renderCost(usage: TokenUsage, pricing: TokenPricing?) {
         println()
         if (pricing == null) {
-            println("Стоимость: недоступна (цена токенов не настроена)")
+            println("Cost: unavailable (token pricing is not configured)")
         } else {
-            println("Стоимость: $${formatUsd(pricing.costUsd(usage))}")
+            println("Cost: $${formatUsd(pricing.costUsd(usage))}")
         }
     }
 
     fun renderSummary(usage: TokenUsage, pricing: TokenPricing?) {
         println()
-        println(Ansi.style("Сводка чата", Ansi.BOLD, Ansi.CYAN))
+        println(Ansi.style("Chat Summary", Ansi.BOLD, Ansi.CYAN))
         renderUsage(usage)
         renderCost(usage, pricing)
         println()

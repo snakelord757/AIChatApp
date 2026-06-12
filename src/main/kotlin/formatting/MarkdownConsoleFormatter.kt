@@ -10,7 +10,7 @@ class MarkdownConsoleFormatter {
         while (index < lines.size) {
             val line = lines[index].replace(
                 Regex("!\\[[^]]*]\\([^)]*\\)"),
-                "[Изображения не поддерживаются в CLI]"
+                "[Images are not supported in the CLI]"
             )
 
             if (line.startsWith("```")) {
@@ -41,10 +41,10 @@ class MarkdownConsoleFormatter {
                 line.startsWith("## ") -> Ansi.style(line.removePrefix("## "), Ansi.BOLD, Ansi.CYAN)
                 line.startsWith("# ") -> Ansi.style(line.removePrefix("# "), Ansi.BOLD, Ansi.MAGENTA)
                 line.startsWith("> ") -> Ansi.style("| ${line.removePrefix("> ")}", Ansi.BLUE)
-                line.startsWith("Warning:", ignoreCase = true) || line.startsWith("Внимание:") -> Ansi.style(line, Ansi.YELLOW)
-                line.startsWith("Error:", ignoreCase = true) || line.startsWith("Ошибка:") -> Ansi.style(line, Ansi.RED)
-                line.startsWith("Success:", ignoreCase = true) || line.startsWith("Готово:") -> Ansi.style(line, Ansi.GREEN)
-                line.startsWith("Note:", ignoreCase = true) || line.startsWith("Примечание:") -> Ansi.style(line, Ansi.BLUE)
+                line.startsWith("Warning:", ignoreCase = true) -> Ansi.style(line, Ansi.YELLOW)
+                line.startsWith("Error:", ignoreCase = true) -> Ansi.style(line, Ansi.RED)
+                line.startsWith("Success:", ignoreCase = true) -> Ansi.style(line, Ansi.GREEN)
+                line.startsWith("Note:", ignoreCase = true) -> Ansi.style(line, Ansi.BLUE)
                 line.startsWith("- ") || line.startsWith("* ") -> "  * ${formatInline(line.drop(2))}"
                 line.matches(Regex("\\d+\\.\\s+.*")) -> "  ${formatInline(line)}"
                 else -> formatInline(line)

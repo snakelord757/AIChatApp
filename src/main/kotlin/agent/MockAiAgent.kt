@@ -17,13 +17,13 @@ class MockAiAgent(
             summaryEvents.onSummaryUsage(TokenUsage.ZERO)
         }
         val answer = """
-            ## Демонстрационный ответ
+            ## Demo response
 
-            Сейчас приложение работает без реального ключа DeepSeek.
+            The app is running without a real DeepSeek key.
 
-            Вы написали: `$userMessage`
+            You wrote: `$userMessage`
 
-            Добавьте `DEEPSEEK_API_KEY` в `local.properties`, чтобы получать настоящие ответы модели `${settings.model}`.
+            Add `DEEPSEEK_API_KEY` to `local.properties` to receive real answers from `${settings.model}`.
         """.trimIndent()
         historyRepository.addAssistant(answer)
         return AgentResponse(answer)

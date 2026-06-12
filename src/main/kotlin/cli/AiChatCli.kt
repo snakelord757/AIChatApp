@@ -50,7 +50,7 @@ object AiChatCli {
         val historyStore = try {
             ChatHistoryStore.open()
         } catch (exception: ChatHistoryBusyException) {
-            renderer.renderError(exception.message ?: "Не могу продолжить работу: файл истории чата занят другим процессом.")
+            renderer.renderError(exception.message ?: "Cannot continue because the chat history file is locked by another process.")
             return
         }
 
@@ -84,7 +84,7 @@ object AiChatCli {
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
                     renderer.renderError(configResult.message)
-                    renderer.renderSystem("Реальный ключ не найден, поэтому запущен локальный демонстрационный режим без обращения к DeepSeek.")
+                    renderer.renderSystem("No real key was found, so local demo mode is running without calling DeepSeek.")
                     MockAiAgent(
                         historyRepository = historyRepository,
                         initialSettings = configResult.fallbackSettings

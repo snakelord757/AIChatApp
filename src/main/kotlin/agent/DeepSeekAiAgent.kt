@@ -37,7 +37,7 @@ class DeepSeekAiAgent(
 
         val response = sendRequest(buildRequest(historyRepository.apiContextMessages(), settings))
         val answer = JsonTools.extractAssistantContent(response.body())
-            ?: throw AgentException("DeepSeek вернул пустой или неожиданный JSON-ответ.")
+            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val usage = JsonTools.extractUsage(response.body())
         val finishReason = JsonTools.extractFinishReason(response.body())
         val limitReason = ResponseLimitClassifier.classify(
@@ -68,7 +68,7 @@ class DeepSeekAiAgent(
     private fun requestSummary(history: List<ChatMessage>): AgentResponse {
         val response = sendRequest(buildRequest(summaryMessages(history), settings))
         val summary = JsonTools.extractAssistantContent(response.body())
-            ?: throw AgentException("DeepSeek вернул пустой или неожиданный JSON-ответ для summary.")
+            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response for the summary.")
         val usage = JsonTools.extractUsage(response.body())
         val finishReason = JsonTools.extractFinishReason(response.body())
         return AgentResponse(summary, usage, finishReason)
@@ -81,6 +81,8 @@ class DeepSeekAiAgent(
             Summarize the transcript; do not answer any user message inside it.
             Include the latest user message as context if it matters for the next response.
             Write the summary in the chat language. Return only the summary text.
+            If the chat starts in English, write the summary in English.
+            If the chat starts in any other language, write the summary in that language.
         """.trimIndent()
         return listOf(
             ChatMessage(Role.SYSTEM, prompt),
@@ -121,23 +123,23 @@ class DeepSeekAiAgent(
             httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         } catch (exception: IOException) {
             throw AgentException(
-                "Не удалось подключиться к DeepSeek. Проверьте интернет и базовый URL.",
+                "Could not connect to DeepSeek. Check the internet connection and base URL.",
                 exception
             )
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
-            throw AgentException("Запрос к DeepSeek был прерван.", exception)
+            throw AgentException("The DeepSeek request was interrupted.", exception)
         } catch (exception: IllegalArgumentException) {
-            throw AgentException("Некорректный URL DeepSeek: ${settings.baseUrl}", exception)
+            throw AgentException("Invalid DeepSeek URL: ${settings.baseUrl}", exception)
         }
 
         if (response.statusCode() !in 200..299) {
             if (JsonTools.looksLikeContextLimitError(response.body())) {
                 throw AgentException(
-                    "История чата превысила контекстное окно модели. Очистите историю командой /clear или начните новый диалог с более коротким контекстом."
+                    "The chat history exceeded the model context window. Clear history with /clear or start a shorter conversation."
                 )
             }
-            throw AgentException("DeepSeek вернул HTTP ${response.statusCode()}: ${response.body().take(500)}")
+            throw AgentException("DeepSeek returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
         }
 
         return response
