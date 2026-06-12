@@ -45,6 +45,7 @@ class ConsoleRenderer(
                 Role.USER -> renderUser(message.content)
                 Role.ASSISTANT -> renderAssistant(message.content)
                 Role.SYSTEM -> Unit
+                Role.EVENT -> renderSystem(message.content)
             }
         }
     }
@@ -67,6 +68,7 @@ class ConsoleRenderer(
         println("Thinking mode: ${if (settings.thinkingMode) "включен" else "выключен"}")
         println("Температура: ${settings.temperature}")
         println("Максимум токенов: ${if (settings.maxTokens > 0) settings.maxTokens else "без ограничений"}")
+        println("Summary interval: ${settings.summaryInterval}")
         println("Базовый URL: ${settings.baseUrl}")
         println("Системный промпт: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }

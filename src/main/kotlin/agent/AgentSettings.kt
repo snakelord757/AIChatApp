@@ -7,6 +7,7 @@ data class AgentSettings(
     val thinkingMode: Boolean = false,
     val temperature: Double = 0.7,
     val maxTokens: Int = 0,
+    val summaryInterval: Int = 20,
     val systemPrompt: String
 ) {
     companion object {

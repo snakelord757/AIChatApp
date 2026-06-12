@@ -22,7 +22,7 @@ class ChatHistoryStore private constructor(
     private val channel: FileChannel,
     private val lock: FileLock
 ) : Closeable {
-    fun read(): List<ChatMessage> {
+    fun readState(): ChatHistoryState {
         channel.position(0)
         val bytes = ByteBuffer.allocate(channel.size().coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         while (bytes.hasRemaining() && channel.read(bytes) >= 0) {
@@ -30,14 +30,30 @@ class ChatHistoryStore private constructor(
         }
         bytes.flip()
         val json = StandardCharsets.UTF_8.decode(bytes).toString().trim()
-        if (json.isEmpty()) return emptyList()
-        return ChatHistoryJson.decodeMessages(json).map { message ->
-            message.copy(content = MojibakeRepair.repair(message.content))
-        }
+        if (json.isEmpty()) return ChatHistoryState()
+        val state = ChatHistoryJson.decodeState(json)
+        val restoredMessages = state.messages.map { message ->
+                message.copy(content = MojibakeRepair.repair(message.content))
+            }
+        return state.copy(
+            messages = addMissingSummaryEvent(restoredMessages, state.summary),
+            summary = state.summary?.copy(content = MojibakeRepair.repair(state.summary.content))
+        )
+    }
+
+    fun read(): List<ChatMessage> {
+        return readState().messages
+    }
+
+    fun writeState(state: ChatHistoryState) {
+        writeJson(ChatHistoryJson.encodeState(state))
     }
 
     fun write(messages: List<ChatMessage>) {
-        val json = ChatHistoryJson.encodeMessages(messages)
+        writeJson(ChatHistoryJson.encodeMessages(messages))
+    }
+
+    private fun writeJson(json: String) {
         val bytes = ByteBuffer.wrap(json.toByteArray(StandardCharsets.UTF_8))
         channel.truncate(0)
         channel.position(0)
@@ -45,6 +61,15 @@ class ChatHistoryStore private constructor(
             channel.write(bytes)
         }
         channel.force(true)
+    }
+
+    private fun addMissingSummaryEvent(messages: List<ChatMessage>, summary: ChatSummary?): List<ChatMessage> {
+        if (summary == null) return messages
+        val event = ChatMessage(Role.EVENT, summaryUsageMessage(summary.usage))
+        if (messages.any { it == event }) return messages
+
+        val insertIndex = (summary.lastMessageIndex + 1).coerceIn(0, messages.size)
+        return messages.take(insertIndex) + event + messages.drop(insertIndex)
     }
 
     override fun close() {
