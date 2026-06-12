@@ -15,7 +15,7 @@ import java.nio.file.StandardOpenOption
 private const val HISTORY_FILE_NAME = "chat-history.json"
 
 class ChatHistoryBusyException : Exception(
-    "Не могу продолжить работу, т.к. файл истории чата занят другим процессом. История чата разблокируется при завершении работы программы через функцию exit или завершение процесса"
+    "Cannot continue because the chat history file is locked by another process. The history unlocks when that process exits."
 )
 
 class ChatHistoryStore private constructor(

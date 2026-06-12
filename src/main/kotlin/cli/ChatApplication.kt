@@ -34,20 +34,20 @@ class ChatApplication(
             val userInput = input.readLine()?.trimChatInput() ?: break
 
             when {
-                userInput.isBlank() -> renderer.renderSystem("Введите сообщение или команду.")
-                userInput in setOf("/exit", "/quit", "/выход") -> {
-                    renderer.renderSystem("До свидания!")
+                userInput.isBlank() -> renderer.renderSystem("Enter a message or command.")
+                userInput in setOf("/exit", "/quit") -> {
+                    renderer.renderSystem("Goodbye!")
                     return
                 }
-                userInput in setOf("/help", "/помощь") -> renderer.renderHelp()
+                userInput == "/help" -> renderer.renderHelp()
                 userInput == "/summary" -> renderer.renderSummary(historyRepository.totalUsage(), pricing)
-                userInput in setOf("/settings", "/настройки") -> {
+                userInput == "/settings" -> {
                     settings = settingsScreen.open(settings)
                     agent.updateSettings(settings)
                     historyRepository.updateSystemPrompt(settings.systemPrompt)
-                    renderer.renderSystem("Возврат в чат. История сохранена.")
+                    renderer.renderSystem("Returned to chat. History is saved.")
                 }
-                userInput in setOf("/clear", "/очистить") -> {
+                userInput == "/clear" -> {
                     historyRepository.clear(settings.systemPrompt)
                     ConsoleScreen.clear()
                     renderer.renderGreeting()
@@ -55,22 +55,22 @@ class ChatApplication(
                         renderer.renderWarning(startupWarning)
                     }
                 }
-                userInput.startsWith("/") -> renderer.renderError("Неизвестная команда. Введите /help для списка команд.")
+                userInput.startsWith("/") -> renderer.renderError("Unknown command. Enter /help for the command list.")
                 else -> handleUserMessage(userInput)
             }
         }
 
-        renderer.renderSystem("Ввод завершён. Приложение остановлено.")
+        renderer.renderSystem("Input ended. Application stopped.")
     }
 
     private fun handleUserMessage(input: String) {
         renderer.renderUser(input)
 
         try {
-            renderer.renderSystem("Отправляю запрос ассистенту...")
+            renderer.renderSystem("Sending request to the assistant...")
             val response = agent.send(input, object : SummaryEvents {
                 override fun onSummaryStarted() {
-                    renderer.renderSystem("Начинается сжатие диалога")
+                    renderer.renderSystem("Starting chat summarization.")
                 }
 
                 override fun onSummaryUsage(usage: chat.TokenUsage) {
@@ -86,23 +86,23 @@ class ChatApplication(
             renderer.renderFinishReason(response.finishReason)
             renderer.renderCost(response.usage, pricing)
         } catch (exception: AgentException) {
-            renderer.renderError(exception.message ?: "Не удалось получить ответ ассистента.")
+            renderer.renderError(exception.message ?: "Could not get an assistant response.")
         } catch (exception: RuntimeException) {
-            renderer.renderError("Неожиданная ошибка: ${exception.message ?: exception::class.simpleName}")
+            renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}")
         }
     }
 
     private fun limitWarning(reason: ResponseLimitReason?): String = when (reason) {
         ResponseLimitReason.REQUEST_MAX_TOKENS ->
-            "Ответ был обрезан: достигнут заданный в настройках лимит maxTokens. Увеличьте maxTokens или установите <= 0, чтобы не отправлять max_tokens."
+            "The response was truncated because the configured maxTokens limit was reached. Increase maxTokens or set it to <= 0 to omit max_tokens."
         ResponseLimitReason.SERVER_DEFAULT_OUTPUT_LIMIT ->
-            "Ответ был обрезан: API применил серверный лимит вывода по умолчанию (примерно 8192 токена). Укажите больший maxTokens в настройках, если нужен более длинный ответ."
+            "The response was truncated because the API applied its default output limit (about 8192 tokens). Set a larger maxTokens value if you need a longer answer."
         ResponseLimitReason.MODEL_CONTEXT_WINDOW ->
-            "Ответ был обрезан: диалог уперся в контекстное окно модели. Очистите историю через /clear или сократите диалог."
+            "The response was truncated because the conversation reached the model context window. Clear history with /clear or shorten the conversation."
         ResponseLimitReason.MODEL_MAX_OUTPUT ->
-            "Ответ был обрезан: достигнут максимальный размер вывода, разрешенный моделью. Разбейте запрос на несколько частей."
+            "The response was truncated because the model output limit was reached. Split the request into several parts."
         ResponseLimitReason.UNKNOWN_LENGTH_LIMIT, null ->
-            "Ответ был обрезан: API вернул finish_reason=length, но точную причину определить не удалось. Проверьте maxTokens и длину истории."
+            "The response was truncated: the API returned finish_reason=length, but the exact cause could not be determined. Check maxTokens and history length."
     }
 
     private fun String.trimChatInput(): String = trim { it.isWhitespace() || it == '\uFEFF' }

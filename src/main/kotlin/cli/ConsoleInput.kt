@@ -3,7 +3,6 @@ package cli
 import formatting.ConsoleEncoding
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.nio.charset.CodingErrorAction
 
 class ConsoleInput(
     private val fallbackReader: BufferedReader = createFallbackReader()
@@ -19,11 +18,7 @@ class ConsoleInput(
 
     companion object {
         private fun createFallbackReader(): BufferedReader {
-            val decoder = ConsoleEncoding.inputCharset()
-                .newDecoder()
-                .onMalformedInput(CodingErrorAction.REPLACE)
-                .onUnmappableCharacter(CodingErrorAction.REPLACE)
-            return BufferedReader(InputStreamReader(System.`in`, decoder))
+            return BufferedReader(InputStreamReader(System.`in`, ConsoleEncoding.inputCharset()))
         }
 
         private fun isWindows(): Boolean {
