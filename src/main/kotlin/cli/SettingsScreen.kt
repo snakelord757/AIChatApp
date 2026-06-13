@@ -1,6 +1,7 @@
 package cli
 
 import agent.AgentSettings
+import chat.ContextStrategy
 import java.net.URI
 
 class SettingsScreen(
@@ -51,7 +52,9 @@ class SettingsScreen(
         println("set thinking <on|off> - enable or disable thinking mode")
         println("set temperature <0..2> - change the temperature")
         println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
-        println("set summaryInterval <number> - change the automatic summary interval")
+        println("set contextStrategy <sliding|facts|branching> - change context strategy")
+        println("set contextWindow <number> - change sliding/facts context window")
+        println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
         println("set systemPrompt <text> - change the system prompt")
         println("set baseUrl <url> - change the base URL")
         println("back - return to chat")
@@ -80,7 +83,15 @@ class SettingsScreen(
             }
             "summaryinterval", "summary_interval", "summary" -> {
                 val interval = value.toIntOrNull()
-                if (interval == null || interval <= 0) invalid(settings) else settings.copy(summaryInterval = interval)
+                if (interval == null || interval < 0) invalid(settings) else settings.copy(summaryInterval = interval)
+            }
+            "contextstrategy", "context_strategy", "strategy" -> {
+                val strategy = ContextStrategy.parse(value)
+                if (strategy == null) invalid(settings) else settings.copy(contextStrategy = strategy)
+            }
+            "contextwindow", "context_window", "contextwindowmessages", "context_window_messages" -> {
+                val window = value.toIntOrNull()
+                if (window == null || window < 0) invalid(settings) else settings.copy(contextWindowMessages = window)
             }
             "systemprompt", "prompt" -> {
                 if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)

@@ -11,6 +11,9 @@ DEEPSEEK_API_KEY=your_api_key_here
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_TOKEN_PRICE_PER_1M_USD=0.28
+AI_CHAT_SUMMARY_INTERVAL=20
+AI_CHAT_CONTEXT_STRATEGY=sliding
+AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
 ```
 
 `local.properties` is ignored by Git. Do not commit real API keys.
@@ -43,7 +46,25 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+
+## Context Management
+
+AIChatApp supports three context strategies:
+
+- `sliding` sends the system prompt plus the latest context-window messages, with the current summary included when one exists.
+- `facts` sends the system prompt, the current summary when one exists, a sticky facts system block, and the latest context-window messages.
+- `branching` sends only the active branch dialog so branches do not mix.
+
+Automatic summary creation is a base option, not a context strategy. It runs when `AI_CHAT_SUMMARY_INTERVAL` is greater than `0` and enough main-timeline messages have accumulated. Disable automatic summaries with:
+
+```properties
+AI_CHAT_SUMMARY_INTERVAL=0
+```
+
+In `/settings`, use `set contextStrategy <sliding|facts|branching>`, `set contextWindow <number>`, and `set summaryInterval <number>`.
+
+Sticky facts are collected from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. Branching starts with `/checkpoint`, then `/branch create <name>` creates an independent continuation from that checkpoint or from the current dialog if no checkpoint exists.
 
 ## JVM Distribution
 

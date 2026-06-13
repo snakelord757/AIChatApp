@@ -41,6 +41,12 @@ class ChatApplication(
                 }
                 userInput == "/help" -> renderer.renderHelp()
                 userInput == "/summary" -> renderer.renderSummary(historyRepository.totalUsage(), pricing)
+                userInput == "/facts" -> renderer.renderFacts(historyRepository.facts())
+                userInput == "/checkpoint" -> {
+                    historyRepository.checkpoint()
+                    renderer.renderSystem("Checkpoint saved.")
+                }
+                userInput.startsWith("/branch") -> handleBranchCommand(userInput)
                 userInput == "/settings" -> {
                     settings = settingsScreen.open(settings)
                     agent.updateSettings(settings)
@@ -61,6 +67,31 @@ class ChatApplication(
         }
 
         renderer.renderSystem("Input ended. Application stopped.")
+    }
+
+    private fun handleBranchCommand(command: String) {
+        val parts = command.split(Regex("\\s+"), limit = 3)
+        when {
+            parts.size >= 2 && parts[1] == "list" -> {
+                renderer.renderBranches(historyRepository.branchNames(), historyRepository.activeBranchName())
+            }
+            parts.size >= 3 && parts[1] == "create" -> {
+                if (historyRepository.createBranch(parts[2])) {
+                    renderer.renderSystem("Branch created and activated: ${parts[2]}")
+                } else {
+                    renderer.renderError("Could not create branch. Use a non-empty unique name.")
+                }
+            }
+            parts.size >= 3 && parts[1] == "switch" -> {
+                if (historyRepository.switchBranch(parts[2])) {
+                    renderer.renderSystem("Switched to branch: ${parts[2]}")
+                    renderer.renderHistory(historyRepository.all())
+                } else {
+                    renderer.renderError("Branch not found: ${parts[2]}")
+                }
+            }
+            else -> renderer.renderError("Usage: /branch create <name>, /branch list, or /branch switch <name>")
+        }
     }
 
     private fun handleUserMessage(input: String) {

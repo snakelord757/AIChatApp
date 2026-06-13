@@ -1,6 +1,7 @@
 package config
 
 import agent.AgentSettings
+import chat.ContextStrategy
 import formatting.ConsoleSystemPrompt
 import java.net.URI
 import java.nio.file.Files
@@ -63,8 +64,16 @@ object LocalPropertiesConfig {
         val summaryInterval = properties.getProperty("AI_CHAT_SUMMARY_INTERVAL")
             ?.trim()
             ?.toIntOrNull()
-            ?.takeIf { it > 0 }
+            ?.takeIf { it >= 0 }
             ?: fallback.summaryInterval
+        val contextStrategy = properties.getProperty("AI_CHAT_CONTEXT_STRATEGY")
+            ?.let(ContextStrategy::parse)
+            ?: fallback.contextStrategy
+        val contextWindowMessages = properties.getProperty("AI_CHAT_CONTEXT_WINDOW_MESSAGES")
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it >= 0 }
+            ?: fallback.contextWindowMessages
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -80,7 +89,9 @@ object LocalPropertiesConfig {
                 apiKey = apiKey,
                 baseUrl = baseUrl.trimEnd('/'),
                 model = model,
-                summaryInterval = summaryInterval
+                summaryInterval = summaryInterval,
+                contextStrategy = contextStrategy,
+                contextWindowMessages = contextWindowMessages
             ),
             pricing,
             pricingWarning

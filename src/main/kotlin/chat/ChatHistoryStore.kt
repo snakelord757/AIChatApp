@@ -37,7 +37,21 @@ class ChatHistoryStore private constructor(
             }
         return state.copy(
             messages = addMissingSummaryEvent(restoredMessages, state.summary),
-            summary = state.summary?.copy(content = MojibakeRepair.repair(state.summary.content))
+            summary = state.summary?.copy(content = MojibakeRepair.repair(state.summary.content)),
+            facts = state.facts.mapValues { (_, value) -> MojibakeRepair.repair(value) },
+            branches = state.branches.map { branch ->
+                branch.copy(
+                    name = MojibakeRepair.repair(branch.name),
+                    messages = branch.messages.map { message ->
+                        message.copy(content = MojibakeRepair.repair(message.content))
+                    }
+                )
+            },
+            checkpoint = state.checkpoint?.copy(
+                messages = state.checkpoint.messages.map { message ->
+                    message.copy(content = MojibakeRepair.repair(message.content))
+                }
+            )
         )
     }
 

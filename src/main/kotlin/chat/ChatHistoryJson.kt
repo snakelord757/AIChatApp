@@ -14,7 +14,14 @@ internal object ChatHistoryJson {
             }
             """{"content":"${escape(summary.content)}","lastMessageIndex":${summary.lastMessageIndex}$usageJson}"""
         }
-        return "{\n  \"messages\": ${encodeMessages(state.messages)},\n  \"summary\": $summaryJson\n}"
+        return "{\n" +
+            "  \"messages\": ${encodeMessages(state.messages)},\n" +
+            "  \"summary\": $summaryJson,\n" +
+            "  \"facts\": ${encodeFacts(state.facts)},\n" +
+            "  \"branches\": ${encodeBranches(state.branches)},\n" +
+            "  \"activeBranchId\": ${state.activeBranchId?.let { "\"${escape(it)}\"" } ?: "null"},\n" +
+            "  \"checkpoint\": ${state.checkpoint?.let(::encodeCheckpoint) ?: "null"}\n" +
+            "}"
     }
 
     fun encodeMessages(messages: List<ChatMessage>): String {
@@ -29,6 +36,23 @@ internal object ChatHistoryJson {
         }
         return "[\n$body\n]"
     }
+
+    private fun encodeFacts(facts: Map<String, String>): String {
+        val body = facts.entries.joinToString(separator = ",") { (key, value) ->
+            """"${escape(key)}":"${escape(value)}""""
+        }
+        return "{$body}"
+    }
+
+    private fun encodeBranches(branches: List<ChatBranch>): String {
+        val body = branches.joinToString(separator = ",\n") { branch ->
+            """  {"id":"${escape(branch.id)}","name":"${escape(branch.name)}","messages":${encodeMessages(branch.messages)}}"""
+        }
+        return "[\n$body\n]"
+    }
+
+    private fun encodeCheckpoint(checkpoint: ChatCheckpoint): String =
+        """{"messages":${encodeMessages(checkpoint.messages)}}"""
 
     fun decodeMessages(json: String): List<ChatMessage> {
         val parser = Parser(json)
@@ -97,6 +121,10 @@ internal object ChatHistoryJson {
 
             var messages: List<ChatMessage> = emptyList()
             var summary: ChatSummary? = null
+            var facts: Map<String, String> = emptyMap()
+            var branches: List<ChatBranch> = emptyList()
+            var activeBranchId: String? = null
+            var checkpoint: ChatCheckpoint? = null
 
             expect('{')
             skipWhitespace()
@@ -114,6 +142,10 @@ internal object ChatHistoryJson {
                 when (name) {
                     "messages" -> messages = parseMessagesArrayOnly()
                     "summary" -> summary = parseNullableSummary()
+                    "facts" -> facts = parseFacts()
+                    "branches" -> branches = parseBranches()
+                    "activeBranchId" -> activeBranchId = parseNullableString()
+                    "checkpoint" -> checkpoint = parseNullableCheckpoint()
                     else -> skipValue()
                 }
                 skipWhitespace()
@@ -126,7 +158,149 @@ internal object ChatHistoryJson {
                         index++
                         skipWhitespace()
                         requireEnd()
-                        return ChatHistoryState(messages, summary)
+                        return ChatHistoryState(
+                            messages = messages,
+                            summary = summary,
+                            facts = facts,
+                            branches = branches,
+                            activeBranchId = activeBranchId,
+                            checkpoint = checkpoint
+                        )
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun parseFacts(): Map<String, String> {
+            val facts = linkedMapOf<String, String>()
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') {
+                index++
+                return emptyMap()
+            }
+
+            while (true) {
+                val key = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                facts[key] = parseString()
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return facts
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun parseBranches(): List<ChatBranch> {
+            val branches = mutableListOf<ChatBranch>()
+            expect('[')
+            skipWhitespace()
+            if (peek() == ']') {
+                index++
+                return emptyList()
+            }
+
+            while (true) {
+                branches += parseBranch()
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    ']' -> {
+                        index++
+                        return branches
+                    }
+                    else -> error("Expected ',' or ']'")
+                }
+            }
+        }
+
+        private fun parseBranch(): ChatBranch {
+            var id: String? = null
+            var name: String? = null
+            var messages: List<ChatMessage> = emptyList()
+
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') error("Branch object must not be empty")
+
+            while (true) {
+                val field = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                when (field) {
+                    "id" -> id = parseString()
+                    "name" -> name = parseString()
+                    "messages" -> messages = parseMessagesArrayOnly()
+                    else -> skipValue()
+                }
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return ChatBranch(
+                            id ?: error("Branch id is missing"),
+                            name ?: error("Branch name is missing"),
+                            messages
+                        )
+                    }
+                    else -> error("Expected ',' or '}'")
+                }
+            }
+        }
+
+        private fun parseNullableString(): String? {
+            if (consumeLiteral("null")) return null
+            return parseString()
+        }
+
+        private fun parseNullableCheckpoint(): ChatCheckpoint? {
+            if (consumeLiteral("null")) return null
+            var messages: List<ChatMessage> = emptyList()
+
+            expect('{')
+            skipWhitespace()
+            if (peek() == '}') {
+                index++
+                return ChatCheckpoint(emptyList())
+            }
+
+            while (true) {
+                val field = parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                when (field) {
+                    "messages" -> messages = parseMessagesArrayOnly()
+                    else -> skipValue()
+                }
+                skipWhitespace()
+                when (peek()) {
+                    ',' -> {
+                        index++
+                        skipWhitespace()
+                    }
+                    '}' -> {
+                        index++
+                        return ChatCheckpoint(messages)
                     }
                     else -> error("Expected ',' or '}'")
                 }

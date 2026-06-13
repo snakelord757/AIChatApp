@@ -2,6 +2,7 @@ package agent
 
 import chat.ChatHistoryRepository
 import chat.ChatMessage
+import chat.ContextStrategy
 import chat.Role
 import java.net.http.HttpRequest
 import kotlin.test.Test
@@ -52,7 +53,50 @@ class DeepSeekAiAgentRequestBodyTest {
         assertContains(messages[1].content, "not an answer to the transcript")
     }
 
-    private fun buildRequestBody(settings: AgentSettings): String {
+    @Test
+    fun `request body never includes event messages`() {
+        val body = buildRequestBody(
+            settings = AgentSettings(apiKey = "", systemPrompt = "system"),
+            history = listOf(
+                ChatMessage(Role.USER, "hello"),
+                ChatMessage(Role.EVENT, "internal event")
+            )
+        )
+
+        assertContains(body, "hello")
+        assertFalse(body.contains("internal event"))
+        assertFalse(body.contains("\"role\":\"event\""))
+    }
+
+    @Test
+    fun `selected context strategy controls request context`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("one")
+        repository.addAssistant("two")
+        repository.addUser("three")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                contextWindowMessages = 1,
+                systemPrompt = "system"
+            )
+        )
+
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.USER, "three")
+            ),
+            context
+        )
+    }
+
+    private fun buildRequestBody(
+        settings: AgentSettings,
+        history: List<ChatMessage> = listOf(ChatMessage(Role.USER, "hello"))
+    ): String {
         val agent = DeepSeekAiAgent(
             historyRepository = ChatHistoryRepository(systemPrompt = "system"),
             initialSettings = settings
@@ -65,7 +109,7 @@ class DeepSeekAiAgentRequestBodyTest {
         method.isAccessible = true
         return method.invoke(
             agent,
-            listOf(ChatMessage(Role.USER, "hello")),
+            history,
             settings
         ) as String
     }

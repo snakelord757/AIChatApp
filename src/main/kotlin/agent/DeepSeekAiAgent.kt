@@ -23,7 +23,9 @@ class DeepSeekAiAgent(
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
 
-        if (historyRepository.shouldCreateSummary(settings.summaryInterval)) {
+        if (settings.summaryInterval > 0 &&
+            historyRepository.shouldCreateSummary(settings.summaryInterval)
+        ) {
             summaryEvents.onSummaryStarted()
             val summaryCutoffIndex = historyRepository.indexBeforeLatestUserMessage()
             val summaryResponse = requestSummary(historyRepository.summarySourceMessages())
@@ -35,7 +37,7 @@ class DeepSeekAiAgent(
             )
         }
 
-        val response = sendRequest(buildRequest(historyRepository.apiContextMessages(), settings))
+        val response = sendRequest(buildRequest(historyRepository.apiContextMessages(settings), settings))
         val answer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val usage = JsonTools.extractUsage(response.body())
@@ -146,9 +148,11 @@ class DeepSeekAiAgent(
     }
 
     private fun buildRequestBody(history: List<ChatMessage>, settings: AgentSettings): String {
-        val messages = history.joinToString(separator = ",") { message ->
-            """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
-        }
+        val messages = history
+            .filter { it.role == Role.SYSTEM || it.role == Role.USER || it.role == Role.ASSISTANT }
+            .joinToString(separator = ",") { message ->
+                """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
+            }
 
         val thinkingType = if (settings.thinkingMode) "enabled" else "disabled"
         val fields = mutableListOf(

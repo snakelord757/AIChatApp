@@ -11,7 +11,9 @@ class MockAiAgent(
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
-        if (historyRepository.shouldCreateSummary(settings.summaryInterval)) {
+        if (settings.summaryInterval > 0 &&
+            historyRepository.shouldCreateSummary(settings.summaryInterval)
+        ) {
             summaryEvents.onSummaryStarted()
             historyRepository.saveSummary("Demo summary is available only in offline mode.", TokenUsage.ZERO)
             summaryEvents.onSummaryUsage(TokenUsage.ZERO)

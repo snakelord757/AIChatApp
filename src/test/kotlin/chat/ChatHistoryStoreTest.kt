@@ -164,6 +164,64 @@ class ChatHistoryStoreTest {
     }
 
     @Test
+    fun `json round trips new state fields and decodes legacy object`() {
+        val state = ChatHistoryState(
+            messages = listOf(ChatMessage(Role.SYSTEM, "system")),
+            summary = ChatSummary("summary", lastMessageIndex = 0),
+            facts = mapOf("goal" to "\u0446\u0435\u043b\u044c"),
+            branches = listOf(
+                ChatBranch(
+                    id = "branch-1",
+                    name = "\u0432\u0435\u0442\u043a\u0430",
+                    messages = listOf(ChatMessage(Role.USER, "\u043f\u0440\u0438\u0432\u0435\u0442"))
+                )
+            ),
+            activeBranchId = "branch-1",
+            checkpoint = ChatCheckpoint(listOf(ChatMessage(Role.USER, "checkpoint")))
+        )
+
+        assertEquals(state, ChatHistoryJson.decodeState(ChatHistoryJson.encodeState(state)))
+        assertEquals(
+            ChatHistoryState(messages = listOf(ChatMessage(Role.USER, "old"))),
+            ChatHistoryJson.decodeState("""{"messages":[{"role":"user","content":"old"}],"summary":null}""")
+        )
+    }
+
+    @Test
+    fun `store repairs mojibake in summary facts branch names and branch messages`() {
+        val directory = Files.createTempDirectory("aichat-history-new-fields-repair-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            fun mojibake(value: String): String =
+                String(value.toByteArray(StandardCharsets.UTF_8), Charset.forName("windows-1251"))
+
+            val state = ChatHistoryState(
+                messages = listOf(ChatMessage(Role.SYSTEM, "system")),
+                summary = ChatSummary(mojibake("\u0441\u0432\u043e\u0434\u043a\u0430"), lastMessageIndex = 0),
+                facts = mapOf("goal" to mojibake("\u0446\u0435\u043b\u044c")),
+                branches = listOf(
+                    ChatBranch(
+                        id = "branch-1",
+                        name = mojibake("\u0432\u0435\u0442\u043a\u0430"),
+                        messages = listOf(ChatMessage(Role.USER, mojibake("\u043f\u0440\u0438\u0432\u0435\u0442")))
+                    )
+                )
+            )
+            Files.writeString(path, ChatHistoryJson.encodeState(state), StandardCharsets.UTF_8)
+
+            ChatHistoryStore.open(path).use { store ->
+                val restored = store.readState()
+                assertEquals("\u0441\u0432\u043e\u0434\u043a\u0430", restored.summary?.content)
+                assertEquals(mapOf("goal" to "\u0446\u0435\u043b\u044c"), restored.facts)
+                assertEquals("\u0432\u0435\u0442\u043a\u0430", restored.branches.single().name)
+                assertEquals("\u043f\u0440\u0438\u0432\u0435\u0442", restored.branches.single().messages.single().content)
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `store rejects second lock owner`() {
         val directory = Files.createTempDirectory("aichat-history-lock-test")
         try {
