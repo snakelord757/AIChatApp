@@ -72,8 +72,7 @@ object AiChatCli {
 
             val historyRepository = ChatHistoryRepository(
                 systemPrompt = settings.systemPrompt,
-                restoredMessages = restoredMessages,
-                restoredSummary = restoredState.summary,
+                restoredState = restoredState,
                 onChanged = historyStore::writeState
             )
 

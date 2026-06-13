@@ -22,6 +22,11 @@ class ConsoleRenderer(
         println("${Ansi.style("/help", Ansi.CYAN)} - show help")
         println("${Ansi.style("/settings", Ansi.CYAN)} - open settings")
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
+        println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
+        println("${Ansi.style("/checkpoint", Ansi.CYAN)} - save a branching checkpoint")
+        println("${Ansi.style("/branch create <name>", Ansi.CYAN)} - create and activate a branch")
+        println("${Ansi.style("/branch list", Ansi.CYAN)} - list branches")
+        println("${Ansi.style("/branch switch <name|main>", Ansi.CYAN)} - switch to a branch or main chat")
         println("${Ansi.style("/clear", Ansi.CYAN)} - clear the current session history")
         println("${Ansi.style("/exit", Ansi.CYAN)} - exit")
     }
@@ -68,7 +73,9 @@ class ConsoleRenderer(
         println("Thinking mode: ${if (settings.thinkingMode) "enabled" else "disabled"}")
         println("Temperature: ${settings.temperature}")
         println("Max tokens: ${if (settings.maxTokens > 0) settings.maxTokens else "unlimited"}")
-        println("Summary interval: ${settings.summaryInterval}")
+        println("Context strategy: ${settings.contextStrategy.displayName}")
+        println("Context window messages: ${settings.contextWindowMessages}")
+        println("Summary interval: ${if (settings.summaryInterval > 0) settings.summaryInterval else "disabled"}")
         println("Base URL: ${settings.baseUrl}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }
@@ -97,6 +104,32 @@ class ConsoleRenderer(
         println(Ansi.style("Chat Summary", Ansi.BOLD, Ansi.CYAN))
         renderUsage(usage)
         renderCost(usage, pricing)
+        println()
+    }
+
+    fun renderFacts(facts: Map<String, String>) {
+        println()
+        println(Ansi.style("Sticky Facts", Ansi.BOLD, Ansi.CYAN))
+        if (facts.isEmpty()) {
+            println("No facts saved.")
+        } else {
+            facts.forEach { (key, value) -> println("$key: $value") }
+        }
+        println()
+    }
+
+    fun renderBranches(branches: List<String>, activeBranch: String?) {
+        println()
+        println(Ansi.style("Branches", Ansi.BOLD, Ansi.CYAN))
+        println("${if (activeBranch == null) "*" else " "} main")
+        if (branches.isEmpty()) {
+            println("No branches saved.")
+        } else {
+            branches.forEach { name ->
+                val marker = if (name == activeBranch) "*" else " "
+                println("$marker $name")
+            }
+        }
         println()
     }
 

@@ -6,6 +6,7 @@ import agent.AiAgent
 import agent.ResponseLimitReason
 import agent.SummaryEvents
 import chat.ChatHistoryRepository
+import chat.ContextStrategy
 import config.TokenPricing
 import formatting.ConsoleScreen
 
@@ -28,10 +29,11 @@ class ChatApplication(
             renderer.renderWarning(startupWarning)
         }
         renderer.renderHistory(historyRepository.all())
+        renderStickyFactsIfNeeded()
 
         while (true) {
             renderer.prompt()
-            val userInput = input.readLine()?.trimChatInput() ?: break
+            val userInput = input.readLine()?.normalizeChatInput() ?: break
 
             when {
                 userInput.isBlank() -> renderer.renderSystem("Enter a message or command.")
@@ -41,11 +43,18 @@ class ChatApplication(
                 }
                 userInput == "/help" -> renderer.renderHelp()
                 userInput == "/summary" -> renderer.renderSummary(historyRepository.totalUsage(), pricing)
+                userInput == "/facts" -> renderer.renderFacts(historyRepository.facts())
+                userInput == "/checkpoint" -> {
+                    historyRepository.checkpoint()
+                    renderer.renderSystem("Checkpoint saved.")
+                }
+                userInput.commandName() == "/branch" -> handleBranchCommand(userInput)
                 userInput == "/settings" -> {
                     settings = settingsScreen.open(settings)
                     agent.updateSettings(settings)
                     historyRepository.updateSystemPrompt(settings.systemPrompt)
                     renderer.renderSystem("Returned to chat. History is saved.")
+                    renderStickyFactsIfNeeded()
                 }
                 userInput == "/clear" -> {
                     historyRepository.clear(settings.systemPrompt)
@@ -61,6 +70,34 @@ class ChatApplication(
         }
 
         renderer.renderSystem("Input ended. Application stopped.")
+    }
+
+    private fun handleBranchCommand(command: String) {
+        val parts = command.split(Regex("\\s+"), limit = 3)
+        when {
+            parts.size >= 2 && parts[1].equals("list", ignoreCase = true) -> {
+                renderer.renderBranches(historyRepository.branchNames(), historyRepository.activeBranchName())
+            }
+            parts.size >= 3 && parts[1].equals("create", ignoreCase = true) -> {
+                if (historyRepository.createBranch(parts[2])) {
+                    renderer.renderSystem("Branch created and activated: ${parts[2]}")
+                } else {
+                    renderer.renderError("Could not create branch. Use a non-empty unique name.")
+                }
+            }
+            parts.size >= 3 && parts[1].equals("switch", ignoreCase = true) -> {
+                if (historyRepository.switchBranch(parts[2])) {
+                    ConsoleScreen.clear()
+                    renderer.renderGreeting()
+                    renderer.renderSystem("Switched to branch: ${parts[2]}")
+                    renderer.renderHistory(historyRepository.all())
+                    renderStickyFactsIfNeeded()
+                } else {
+                    renderer.renderError("Branch not found: ${parts[2]}")
+                }
+            }
+            else -> renderer.renderError("Usage: /branch create <name>, /branch list, or /branch switch <name|main>")
+        }
     }
 
     private fun handleUserMessage(input: String) {
@@ -85,10 +122,24 @@ class ChatApplication(
             renderer.renderUsage(response.usage)
             renderer.renderFinishReason(response.finishReason)
             renderer.renderCost(response.usage, pricing)
+            renderStickyFactsIfNeeded()
         } catch (exception: AgentException) {
             renderer.renderError(exception.message ?: "Could not get an assistant response.")
+            renderStickyFactsIfNeeded()
         } catch (exception: RuntimeException) {
             renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}")
+            renderStickyFactsIfNeeded()
+        }
+    }
+
+    private fun renderStickyFactsIfNeeded() {
+        if (settings.contextStrategy != ContextStrategy.STICKY_FACTS) return
+        val facts = historyRepository.facts()
+        if (facts.isEmpty()) return
+        renderer.renderFacts(facts)
+        historyRepository.lastFactsUsage()?.let { usage ->
+            renderer.renderUsage(usage)
+            renderer.renderCost(usage, pricing)
         }
     }
 
@@ -105,5 +156,16 @@ class ChatApplication(
             "The response was truncated: the API returned finish_reason=length, but the exact cause could not be determined. Check maxTokens and history length."
     }
 
-    private fun String.trimChatInput(): String = trim { it.isWhitespace() || it == '\uFEFF' }
+    private fun String.normalizeChatInput(): String {
+        val trimmed = trim { it.isWhitespace() || it == '\uFEFF' || it.isInvisibleFormat() }
+        if (trimmed.isEmpty()) return trimmed
+        val slashLike = setOf('/', '\uFF0F', '\u2215', '\u2044')
+        return if (trimmed.first() in slashLike) "/${trimmed.drop(1)}" else trimmed
+    }
+
+    private fun String.commandName(): String =
+        substringBefore(' ').lowercase()
+
+    private fun Char.isInvisibleFormat(): Boolean =
+        this in setOf('\u200B', '\u200C', '\u200D', '\u2060')
 }

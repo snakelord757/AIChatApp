@@ -2,8 +2,22 @@ package agent
 
 import chat.ChatHistoryRepository
 import chat.ChatMessage
+import chat.ContextStrategy
 import chat.Role
+import java.net.Authenticator
+import java.net.CookieHandler
+import java.net.ProxySelector
+import java.net.URI
+import java.net.http.HttpClient
 import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
+import java.time.Duration
+import java.util.Optional
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLParameters
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -52,7 +66,112 @@ class DeepSeekAiAgentRequestBodyTest {
         assertContains(messages[1].content, "not an answer to the transcript")
     }
 
-    private fun buildRequestBody(settings: AgentSettings): String {
+    @Test
+    fun `request body never includes event messages`() {
+        val body = buildRequestBody(
+            settings = AgentSettings(apiKey = "", systemPrompt = "system"),
+            history = listOf(
+                ChatMessage(Role.USER, "hello"),
+                ChatMessage(Role.EVENT, "internal event")
+            )
+        )
+
+        assertContains(body, "hello")
+        assertFalse(body.contains("internal event"))
+        assertFalse(body.contains("\"role\":\"event\""))
+    }
+
+    @Test
+    fun `selected context strategy controls request context`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("one")
+        repository.addAssistant("two")
+        repository.addUser("three")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                contextWindowMessages = 1,
+                systemPrompt = "system"
+            )
+        )
+
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.USER, "three")
+            ),
+            context
+        )
+    }
+
+    @Test
+    fun `sticky facts strategy extracts facts before main request`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("previous request")
+        repository.addAssistant("previous answer")
+        val httpClient = RecordingHttpClient(
+            listOf(
+                assistantResponse("project_goal: remember generated facts"),
+                assistantResponse("final answer"),
+                assistantResponse("preferred_language: Kotlin"),
+                assistantResponse("second answer")
+            )
+        )
+        val agent = DeepSeekAiAgent(
+            historyRepository = repository,
+            initialSettings = AgentSettings(
+                apiKey = "key",
+                contextStrategy = ContextStrategy.STICKY_FACTS,
+                contextWindowMessages = 2,
+                summaryInterval = 0,
+                systemPrompt = "system"
+            ),
+            httpClient = httpClient
+        )
+
+        agent.send("We need generated facts")
+
+        assertEquals(2, httpClient.requestBodies.size)
+        assertContains(httpClient.requestBodies[0], "Extract durable sticky facts")
+        assertContains(httpClient.requestBodies[0], "Recent messages:")
+        assertFalse(httpClient.requestBodies[0].contains("previous request"))
+        assertContains(httpClient.requestBodies[0], "assistant: previous answer")
+        assertContains(httpClient.requestBodies[0], "user: We need generated facts")
+        assertContains(httpClient.requestBodies[1], "Sticky facts:")
+        assertContains(httpClient.requestBodies[1], "project_goal: remember generated facts")
+        assertContains(httpClient.requestBodies[1], "assistant\",\"content\":\"previous answer")
+        assertContains(httpClient.requestBodies[1], "user\",\"content\":\"We need generated facts")
+        assertEquals(mapOf("project_goal" to "remember generated facts"), repository.facts())
+        assertEquals(chat.TokenUsage(inputTokens = 2, outputTokens = 2), repository.totalUsage())
+
+        agent.send("Use Kotlin for implementation")
+
+        assertEquals(4, httpClient.requestBodies.size)
+        assertContains(httpClient.requestBodies[2], "Existing facts:")
+        assertContains(httpClient.requestBodies[2], "project_goal: remember generated facts")
+        assertContains(httpClient.requestBodies[2], "assistant: final answer")
+        assertContains(httpClient.requestBodies[2], "user: Use Kotlin for implementation")
+        assertContains(httpClient.requestBodies[3], "Sticky facts:")
+        assertContains(httpClient.requestBodies[3], "project_goal: remember generated facts")
+        assertContains(httpClient.requestBodies[3], "preferred_language: Kotlin")
+        assertContains(httpClient.requestBodies[3], "assistant\",\"content\":\"final answer")
+        assertContains(httpClient.requestBodies[3], "user\",\"content\":\"Use Kotlin for implementation")
+        assertEquals(
+            mapOf(
+                "project_goal" to "remember generated facts",
+                "preferred_language" to "Kotlin"
+            ),
+            repository.facts()
+        )
+        assertEquals(chat.TokenUsage(inputTokens = 4, outputTokens = 4), repository.totalUsage())
+    }
+
+    private fun buildRequestBody(
+        settings: AgentSettings,
+        history: List<ChatMessage> = listOf(ChatMessage(Role.USER, "hello"))
+    ): String {
         val agent = DeepSeekAiAgent(
             historyRepository = ChatHistoryRepository(systemPrompt = "system"),
             initialSettings = settings
@@ -65,7 +184,7 @@ class DeepSeekAiAgentRequestBodyTest {
         method.isAccessible = true
         return method.invoke(
             agent,
-            listOf(ChatMessage(Role.USER, "hello")),
+            history,
             settings
         ) as String
     }
@@ -88,6 +207,9 @@ class DeepSeekAiAgentRequestBodyTest {
         ) as HttpRequest
     }
 
+    private fun assistantResponse(content: String): String =
+        """{"choices":[{"finish_reason":"stop","message":{"content":"${JsonTools.escape(content)}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+
     @Suppress("UNCHECKED_CAST")
     private fun buildSummaryMessages(history: List<ChatMessage>): List<ChatMessage> {
         val agent = DeepSeekAiAgent(
@@ -100,5 +222,83 @@ class DeepSeekAiAgentRequestBodyTest {
         )
         method.isAccessible = true
         return method.invoke(agent, history) as List<ChatMessage>
+    }
+
+    private class RecordingHttpClient(
+        private val responses: List<String>
+    ) : HttpClient() {
+        val requestBodies = mutableListOf<String>()
+        private var index = 0
+
+        override fun <T : Any?> send(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>
+        ): HttpResponse<T> {
+            val body = request.bodyPublisher().orElseThrow().let { publisher ->
+                val subscriber = BodySubscriber()
+                publisher.subscribe(subscriber)
+                subscriber.body()
+            }
+            requestBodies += body
+            val response = responses.getOrElse(index) {
+                """{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}"""
+            }
+            index++
+            @Suppress("UNCHECKED_CAST")
+            return StringHttpResponse(request, response) as HttpResponse<T>
+        }
+
+        override fun <T : Any?> sendAsync(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>
+        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.completedFuture(send(request, responseBodyHandler))
+
+        override fun <T : Any?> sendAsync(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>,
+            pushPromiseHandler: HttpResponse.PushPromiseHandler<T>
+        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.completedFuture(send(request, responseBodyHandler))
+
+        override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
+        override fun connectTimeout(): Optional<Duration> = Optional.empty()
+        override fun followRedirects(): Redirect = Redirect.NEVER
+        override fun proxy(): Optional<ProxySelector> = Optional.empty()
+        override fun sslContext(): SSLContext = SSLContext.getDefault()
+        override fun sslParameters(): SSLParameters = SSLParameters()
+        override fun authenticator(): Optional<Authenticator> = Optional.empty()
+        override fun version(): Version = Version.HTTP_1_1
+        override fun executor(): Optional<Executor> = Optional.empty()
+    }
+
+    private class BodySubscriber : java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {
+        private val bytes = mutableListOf<Byte>()
+
+        override fun onSubscribe(subscription: java.util.concurrent.Flow.Subscription) {
+            subscription.request(Long.MAX_VALUE)
+        }
+
+        override fun onNext(item: java.nio.ByteBuffer) {
+            while (item.hasRemaining()) bytes += item.get()
+        }
+
+        override fun onError(throwable: Throwable) = throw throwable
+        override fun onComplete() = Unit
+
+        fun body(): String = bytes.toByteArray().toString(StandardCharsets.UTF_8)
+    }
+
+    private class StringHttpResponse(
+        private val request: HttpRequest,
+        private val body: String
+    ) : HttpResponse<String> {
+        override fun statusCode(): Int = 200
+        override fun request(): HttpRequest = request
+        override fun previousResponse(): Optional<HttpResponse<String>> = Optional.empty()
+        override fun headers(): java.net.http.HttpHeaders =
+            java.net.http.HttpHeaders.of(emptyMap()) { _, _ -> true }
+        override fun body(): String = body
+        override fun sslSession(): Optional<javax.net.ssl.SSLSession> = Optional.empty()
+        override fun uri(): URI = request.uri()
+        override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
     }
 }

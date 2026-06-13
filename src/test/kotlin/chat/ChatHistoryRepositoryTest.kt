@@ -1,6 +1,8 @@
 package chat
 
+import agent.AgentSettings
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 class ChatHistoryRepositoryTest {
@@ -160,6 +162,334 @@ class ChatHistoryRepositoryTest {
 
         repository.addUser("three")
         assertEquals(true, repository.shouldCreateSummary(interval = 2))
+    }
+
+    @Test
+    fun `summary trigger is disabled when interval is zero`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        repository.addUser("one")
+        repository.addAssistant("two")
+        repository.addUser("three")
+
+        assertEquals(false, repository.shouldCreateSummary(interval = 0))
+    }
+
+    @Test
+    fun `sliding window strategy sends only last dialog messages plus system prompt`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("one")
+        repository.addAssistant("two")
+        repository.addUser("three")
+
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.ASSISTANT, "two"),
+                ChatMessage(Role.USER, "three")
+            ),
+            repository.apiContextMessages(
+                AgentSettings(
+                    apiKey = "",
+                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                    contextWindowMessages = 2,
+                    systemPrompt = "system"
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `sliding window strategy includes summary as base context when available`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("old")
+        repository.addAssistant("old answer")
+        repository.saveSummary("compressed old dialog", TokenUsage.ZERO)
+        repository.addUser("new")
+
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.SYSTEM, "Summary of the previous dialog:\ncompressed old dialog"),
+                ChatMessage(Role.USER, "new")
+            ),
+            repository.apiContextMessages(
+                AgentSettings(
+                    apiKey = "",
+                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                    contextWindowMessages = 4,
+                    systemPrompt = "system"
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `sticky facts strategy sends facts block plus sliding dialog window`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("goal: ship context strategies")
+        repository.addAssistant("noted")
+        repository.addUser("latest")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.STICKY_FACTS,
+                contextWindowMessages = 1,
+                systemPrompt = "system"
+            )
+        )
+
+        assertEquals(Role.SYSTEM, context[0].role)
+        assertEquals(Role.SYSTEM, context[1].role)
+        assertContains(context[1].content, "Sticky facts:")
+        assertContains(context[1].content, "goal: ship context strategies")
+        assertEquals(listOf(ChatMessage(Role.USER, "latest")), context.drop(2))
+    }
+
+    @Test
+    fun `sticky facts strategy includes summary before facts when available`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("goal: ship context strategies")
+        repository.saveSummary("compressed old dialog", TokenUsage.ZERO)
+        repository.addUser("latest")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.STICKY_FACTS,
+                contextWindowMessages = 1,
+                systemPrompt = "system"
+            )
+        )
+
+        assertEquals(ChatMessage(Role.SYSTEM, "system"), context[0])
+        assertEquals(ChatMessage(Role.SYSTEM, "Summary of the previous dialog:\ncompressed old dialog"), context[1])
+        assertContains(context[2].content, "Sticky facts:")
+        assertEquals(ChatMessage(Role.USER, "latest"), context[3])
+    }
+
+    @Test
+    fun `facts are updated from explicit english and russian markers`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        repository.addUser("goal: finish tests")
+        repository.addUser("\u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u044e: \u043a\u0440\u0430\u0442\u043a\u043e")
+
+        assertEquals(
+            mapOf(
+                "goal" to "finish tests",
+                "preferences" to "\u043a\u0440\u0430\u0442\u043a\u043e"
+            ),
+            repository.facts()
+        )
+    }
+
+    @Test
+    fun `facts are updated from extracted key value lines`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        repository.applyExtractedFacts(
+            """
+            project_goal: implement generated memory
+            preferred_language: Russian
+            none
+            """.trimIndent()
+        )
+
+        assertEquals(
+            mapOf(
+                "project_goal" to "implement generated memory",
+                "preferred_language" to "Russian"
+            ),
+            repository.facts()
+        )
+    }
+
+    @Test
+    fun `facts extraction usage is included in total usage and excluded from api context`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        repository.applyExtractedFacts(
+            content = "project_goal: account facts usage",
+            usage = TokenUsage(inputTokens = 7, outputTokens = 3, reasoningTokens = 2)
+        )
+
+        assertEquals(TokenUsage(inputTokens = 7, outputTokens = 3, reasoningTokens = 2), repository.totalUsage())
+        assertEquals(TokenUsage(inputTokens = 7, outputTokens = 3, reasoningTokens = 2), repository.lastFactsUsage())
+        assertEquals(true, repository.all().any { it.role == Role.EVENT && it.content.contains("Facts request tokens") })
+        assertEquals(false, repository.apiContextMessages().any { it.role == Role.EVENT })
+    }
+
+    @Test
+    fun `facts source messages use last N dialog messages`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("one")
+        repository.addAssistant("two")
+        repository.addUser("three")
+
+        assertEquals(
+            listOf(
+                ChatMessage(Role.ASSISTANT, "two"),
+                ChatMessage(Role.USER, "three")
+            ),
+            repository.factsSourceMessages(window = 2)
+        )
+    }
+
+    @Test
+    fun `branches from checkpoint diverge independently and switch active chat context`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("base")
+        repository.checkpoint()
+
+        assertEquals(true, repository.createBranch("alpha"))
+        repository.addUser("alpha message")
+
+        assertEquals(true, repository.createBranch("beta"))
+        repository.addUser("beta message")
+
+        assertEquals(true, repository.switchBranch("alpha"))
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.USER, "base"),
+                ChatMessage(Role.USER, "alpha message")
+            ),
+            repository.apiContextMessages(
+                AgentSettings(
+                    apiKey = "",
+                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                    contextWindowMessages = 10,
+                    systemPrompt = "system"
+                )
+            )
+        )
+
+        assertEquals(true, repository.switchBranch("beta"))
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.USER, "base"),
+                ChatMessage(Role.USER, "beta message")
+            ),
+            repository.all()
+        )
+
+        assertEquals(true, repository.switchBranch("main"))
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.USER, "base")
+            ),
+            repository.all()
+        )
+    }
+
+    @Test
+    fun `summary is stored independently for active branch`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("main base")
+        repository.saveSummary("main summary", TokenUsage(inputTokens = 1), lastMessageIndex = 1)
+        repository.checkpoint()
+
+        assertEquals(true, repository.createBranch("detail"))
+        repository.addUser("branch detail")
+        repository.addAssistant("branch answer")
+        assertEquals(true, repository.shouldCreateSummary(interval = 1))
+
+        repository.saveSummary(
+            content = "branch summary",
+            usage = TokenUsage(inputTokens = 2),
+            lastMessageIndex = repository.indexBeforeLatestUserMessage()
+        )
+
+        assertEquals("main summary", repository.state().summary?.content)
+        assertEquals("branch summary", repository.state().branches.single().summary?.content)
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.SYSTEM, "Summary of the previous dialog:\nbranch summary"),
+                ChatMessage(Role.USER, "branch detail"),
+                ChatMessage(Role.ASSISTANT, "branch answer")
+            ),
+            repository.apiContextMessages()
+        )
+
+        assertEquals(true, repository.switchBranch("main"))
+        assertEquals(
+            listOf(
+                ChatMessage(Role.SYSTEM, "system"),
+                ChatMessage(Role.SYSTEM, "Summary of the previous dialog:\nmain summary")
+            ),
+            repository.apiContextMessages()
+        )
+    }
+
+    @Test
+    fun `facts are stored independently for main and branches`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.applyExtractedFacts("goal: main goal")
+        repository.checkpoint()
+
+        assertEquals(true, repository.createBranch("alpha"))
+        assertEquals(mapOf("goal" to "main goal"), repository.facts())
+
+        repository.applyExtractedFacts("goal: branch goal\nbranch_only: yes")
+        assertEquals(
+            mapOf(
+                "goal" to "branch goal",
+                "branch_only" to "yes"
+            ),
+            repository.facts()
+        )
+
+        assertEquals(true, repository.switchBranch("main"))
+        assertEquals(mapOf("goal" to "main goal"), repository.facts())
+
+        repository.applyExtractedFacts("main_only: yes")
+        assertEquals(
+            mapOf(
+                "goal" to "main goal",
+                "main_only" to "yes"
+            ),
+            repository.facts()
+        )
+
+        assertEquals(true, repository.switchBranch("alpha"))
+        assertEquals(
+            mapOf(
+                "goal" to "branch goal",
+                "branch_only" to "yes"
+            ),
+            repository.facts()
+        )
+    }
+
+    @Test
+    fun `sticky facts context uses active branch facts only`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.applyExtractedFacts("goal: main goal")
+        repository.addUser("main message")
+        repository.checkpoint()
+
+        assertEquals(true, repository.createBranch("alpha"))
+        repository.applyExtractedFacts("goal: branch goal")
+        repository.addUser("branch message")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.STICKY_FACTS,
+                contextWindowMessages = 3,
+                systemPrompt = "system"
+            )
+        )
+
+        val factsBlock = context.first { it.content.startsWith("Sticky facts:") }.content
+        assertContains(factsBlock, "goal: branch goal")
+        assertEquals(false, factsBlock.contains("main goal"))
+        assertEquals(true, context.any { it.content == "branch message" })
     }
 
     @Test

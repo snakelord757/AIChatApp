@@ -2,6 +2,7 @@ package agent
 
 import chat.ChatHistoryRepository
 import chat.ChatMessage
+import chat.ContextStrategy
 import chat.Role
 import java.io.IOException
 import java.net.URI
@@ -23,7 +24,15 @@ class DeepSeekAiAgent(
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
 
-        if (historyRepository.shouldCreateSummary(settings.summaryInterval)) {
+        if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
+            requestFacts()?.let { response ->
+                historyRepository.applyExtractedFacts(response.content, response.usage)
+            }
+        }
+
+        if (settings.summaryInterval > 0 &&
+            historyRepository.shouldCreateSummary(settings.summaryInterval)
+        ) {
             summaryEvents.onSummaryStarted()
             val summaryCutoffIndex = historyRepository.indexBeforeLatestUserMessage()
             val summaryResponse = requestSummary(historyRepository.summarySourceMessages())
@@ -35,7 +44,7 @@ class DeepSeekAiAgent(
             )
         }
 
-        val response = sendRequest(buildRequest(historyRepository.apiContextMessages(), settings))
+        val response = sendRequest(buildRequest(historyRepository.apiContextMessages(settings), settings))
         val answer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val usage = JsonTools.extractUsage(response.body())
@@ -72,6 +81,53 @@ class DeepSeekAiAgent(
         val usage = JsonTools.extractUsage(response.body())
         val finishReason = JsonTools.extractFinishReason(response.body())
         return AgentResponse(summary, usage, finishReason)
+    }
+
+    private fun requestFacts(): AgentResponse? {
+        val response = sendRequest(
+            buildRequest(
+                factExtractionMessages(
+                    existingFacts = historyRepository.facts(),
+                    sourceMessages = historyRepository.factsSourceMessages(settings.contextWindowMessages)
+                ),
+                settings
+            )
+        )
+        val content = JsonTools.extractAssistantContent(response.body()) ?: return null
+        val usage = JsonTools.extractUsage(response.body())
+        val finishReason = JsonTools.extractFinishReason(response.body())
+        return AgentResponse(content, usage, finishReason)
+    }
+
+    private fun factExtractionMessages(
+        existingFacts: Map<String, String>,
+        sourceMessages: List<ChatMessage>
+    ): List<ChatMessage> {
+        val prompt = """
+            Extract durable sticky facts from the recent chat messages for future chat context.
+            Keep only stable goals, constraints, preferences, decisions, agreements, names, project details, and other facts useful later.
+            Do not answer the user.
+            Return only lines in the format key: value.
+            Use concise snake_case keys.
+            Omit facts already present unless the recent messages update them.
+            If there are no durable facts, return none.
+            Preserve the user's language in values.
+        """.trimIndent()
+        val existing = if (existingFacts.isEmpty()) {
+            "Existing facts: none"
+        } else {
+            existingFacts.entries.joinToString(
+                separator = "\n",
+                prefix = "Existing facts:\n"
+            ) { (key, value) -> "$key: $value" }
+        }
+        val recentMessages = sourceMessages.joinToString(separator = "\n\n") { message ->
+            "${message.role.apiName}: ${message.content}"
+        }.ifBlank { "none" }
+        return listOf(
+            ChatMessage(Role.SYSTEM, prompt),
+            ChatMessage(Role.USER, "$existing\n\nRecent messages:\n$recentMessages")
+        )
     }
 
     private fun summaryMessages(history: List<ChatMessage>): List<ChatMessage> {
@@ -146,9 +202,11 @@ class DeepSeekAiAgent(
     }
 
     private fun buildRequestBody(history: List<ChatMessage>, settings: AgentSettings): String {
-        val messages = history.joinToString(separator = ",") { message ->
-            """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
-        }
+        val messages = history
+            .filter { it.role == Role.SYSTEM || it.role == Role.USER || it.role == Role.ASSISTANT }
+            .joinToString(separator = ",") { message ->
+                """{"role":"${JsonTools.escape(message.role.apiName)}","content":"${JsonTools.escape(message.content)}"}"""
+            }
 
         val thinkingType = if (settings.thinkingMode) "enabled" else "disabled"
         val fields = mutableListOf(

@@ -1,6 +1,7 @@
 package agent
 
 import chat.ChatHistoryRepository
+import chat.ContextStrategy
 import chat.TokenUsage
 
 class MockAiAgent(
@@ -11,7 +12,12 @@ class MockAiAgent(
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
-        if (historyRepository.shouldCreateSummary(settings.summaryInterval)) {
+        if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
+            historyRepository.applyExtractedFacts("latest_user_prompt: $userMessage", TokenUsage.ZERO)
+        }
+        if (settings.summaryInterval > 0 &&
+            historyRepository.shouldCreateSummary(settings.summaryInterval)
+        ) {
             summaryEvents.onSummaryStarted()
             historyRepository.saveSummary("Demo summary is available only in offline mode.", TokenUsage.ZERO)
             summaryEvents.onSummaryUsage(TokenUsage.ZERO)

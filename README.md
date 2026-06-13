@@ -11,6 +11,9 @@ DEEPSEEK_API_KEY=your_api_key_here
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_TOKEN_PRICE_PER_1M_USD=0.28
+AI_CHAT_SUMMARY_INTERVAL=20
+AI_CHAT_CONTEXT_STRATEGY=sliding
+AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
 ```
 
 `local.properties` is ignored by Git. Do not commit real API keys.
@@ -43,7 +46,26 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+
+## Context Management
+
+AIChatApp supports two context strategies:
+
+- `sliding` sends the system prompt plus the latest context-window messages, with the current summary included when one exists.
+- `facts` asks the model to extract durable memory from the current sticky facts plus the latest `AI_CHAT_CONTEXT_WINDOW_MESSAGES` messages, stores the resulting key-value facts, then sends the system prompt, the current summary when one exists, the sticky facts system block, and the latest context-window messages.
+
+Automatic summary creation is a base option, not a context strategy. It runs when `AI_CHAT_SUMMARY_INTERVAL` is greater than `0` and enough messages have accumulated in the active chat. Main chat and every branch keep their own independent summary. Disable automatic summaries with:
+
+```properties
+AI_CHAT_SUMMARY_INTERVAL=0
+```
+
+In `/settings`, use `set contextStrategy <sliding|facts>`, `set contextWindow <number>`, and `set summaryInterval <number>`.
+
+Sticky facts can still be collected immediately from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. With the `facts` strategy enabled, the app also sends a small extraction prompt before the main assistant response so the model can turn natural user messages into stored facts.
+
+Branching is a chat feature, not a context strategy. Use `/checkpoint`, then `/branch create <name>` to create an independent continuation from that checkpoint or from the current dialog if no checkpoint exists. Use `/branch switch <name>` to enter a branch and `/branch switch main` to return to the main chat. Each branch keeps independent messages, sticky facts, and summary state. The selected context strategy and automatic summary option apply only to the active chat or branch.
 
 ## JVM Distribution
 

@@ -1,5 +1,7 @@
 package agent
 
+import chat.ContextStrategy
+
 data class AgentSettings(
     val apiKey: String,
     val baseUrl: String = "https://api.deepseek.com",
@@ -8,6 +10,8 @@ data class AgentSettings(
     val temperature: Double = 0.7,
     val maxTokens: Int = 0,
     val summaryInterval: Int = 20,
+    val contextStrategy: ContextStrategy = ContextStrategy.SLIDING_WINDOW,
+    val contextWindowMessages: Int = 20,
     val systemPrompt: String
 ) {
     companion object {
