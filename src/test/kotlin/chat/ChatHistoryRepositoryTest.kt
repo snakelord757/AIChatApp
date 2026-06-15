@@ -270,6 +270,41 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
+    fun `memory messages are inserted after base system prompt before strategy context`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("goal: keep facts")
+        repository.saveSummary("compressed old dialog", TokenUsage.ZERO)
+        repository.addUser("latest")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(
+                apiKey = "",
+                contextStrategy = ContextStrategy.STICKY_FACTS,
+                contextWindowMessages = 1,
+                systemPrompt = "system"
+            ),
+            memoryMessages = listOf(ChatMessage(Role.SYSTEM, "Permanent memory instructions:\nRule."))
+        )
+
+        assertEquals(ChatMessage(Role.SYSTEM, "system"), context[0])
+        assertEquals(ChatMessage(Role.SYSTEM, "Permanent memory instructions:\nRule."), context[1])
+        assertEquals(ChatMessage(Role.SYSTEM, "Summary of the previous dialog:\ncompressed old dialog"), context[2])
+        assertContains(context[3].content, "Sticky facts:")
+        assertEquals(ChatMessage(Role.USER, "latest"), context[4])
+    }
+
+    @Test
+    fun `active branch id exposes main fallback and branch id`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        assertEquals("main", repository.activeBranchIdOrMain())
+        repository.createBranch("alpha")
+
+        assertEquals(repository.state().activeBranchId, repository.activeBranchIdOrMain())
+        assertEquals("alpha", repository.activeBranchDisplayName())
+    }
+
+    @Test
     fun `facts are updated from explicit english and russian markers`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
 

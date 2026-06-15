@@ -99,10 +99,18 @@ class ChatHistoryRepository(
     }
 
     fun apiContextMessages(settings: AgentSettings): List<ChatMessage> {
+        return apiContextMessages(settings, emptyList())
+    }
+
+    fun apiContextMessages(settings: AgentSettings, memoryMessages: List<ChatMessage>): List<ChatMessage> {
         return when (settings.contextStrategy) {
-            ContextStrategy.SLIDING_WINDOW -> summarizedSlidingWindowMessages(settings.contextWindowMessages, activeMessages())
+            ContextStrategy.SLIDING_WINDOW -> withMemoryMessages(
+                summarizedSlidingWindowMessages(settings.contextWindowMessages, activeMessages()),
+                memoryMessages
+            )
             ContextStrategy.STICKY_FACTS -> buildList {
                 add(activeSystemPrompt())
+                addAll(memoryMessages.apiMessages())
                 activeSummaryMessage()?.let(::add)
                 factsMessage()?.let(::add)
                 addAll(lastDialogMessages(activeSummaryTailMessages(), settings.contextWindowMessages))
@@ -116,6 +124,15 @@ class ChatHistoryRepository(
 
     fun factsSourceMessages(window: Int): List<ChatMessage> =
         lastDialogMessages(activeSummaryTailMessages(), window)
+
+    fun personalMemorySourceMessages(window: Int): List<ChatMessage> =
+        lastDialogMessages(activeSummaryTailMessages(), window)
+
+    fun activeSummaryText(): String? = activeSummary()?.content
+
+    fun activeBranchIdOrMain(): String = activeBranchId ?: "main"
+
+    fun activeBranchDisplayName(): String = activeBranchName() ?: "main"
 
     fun applyExtractedFacts(content: String, usage: TokenUsage? = null) {
         usage?.let {
@@ -396,6 +413,16 @@ class ChatHistoryRepository(
         return source
             .filter { it.role == Role.USER || it.role == Role.ASSISTANT }
             .takeLast(limit)
+    }
+
+    private fun withMemoryMessages(
+        contextMessages: List<ChatMessage>,
+        memoryMessages: List<ChatMessage>
+    ): List<ChatMessage> {
+        if (memoryMessages.isEmpty()) return contextMessages
+        val system = contextMessages.firstOrNull { it.role == Role.SYSTEM } ?: activeSystemPrompt()
+        val tail = contextMessages.dropWhile { it == system }
+        return listOf(system) + memoryMessages.apiMessages() + tail
     }
 
     private fun updateFacts(content: String) {

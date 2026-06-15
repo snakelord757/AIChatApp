@@ -3,15 +3,19 @@ package agent
 import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import chat.TokenUsage
+import memory.MemoryRepository
 
 class MockAiAgent(
     private val historyRepository: ChatHistoryRepository,
-    initialSettings: AgentSettings
+    initialSettings: AgentSettings,
+    private val memoryRepository: MemoryRepository? = null
 ) : AiAgent {
     private var settings = initialSettings
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
+        memoryRepository?.contextMessages()
+        memoryRepository?.reinforcePersonalSignals(userMessage)
         if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
             historyRepository.applyExtractedFacts("latest_user_prompt: $userMessage", TokenUsage.ZERO)
         }

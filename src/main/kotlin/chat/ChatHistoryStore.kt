@@ -9,10 +9,7 @@ import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
-
-private const val HISTORY_FILE_NAME = "chat-history.json"
 
 class ChatHistoryBusyException : Exception(
     "Cannot continue because the chat history file is locked by another process. The history unlocks when that process exits."
@@ -126,32 +123,6 @@ class ChatHistoryStore private constructor(
             return ChatHistoryStore(channel, lock)
         }
 
-        fun defaultHistoryPath(): Path = applicationDirectory().resolve(HISTORY_FILE_NAME)
-
-        private fun applicationDirectory(): Path {
-            System.getProperty("aichat.history.dir")?.takeIf { it.isNotBlank() }?.let {
-                return Paths.get(it).toAbsolutePath().normalize()
-            }
-
-            System.getenv("APP_HOME")?.takeIf { it.isNotBlank() }?.let {
-                return Paths.get(it).toAbsolutePath().normalize()
-            }
-
-            if (isWindows()) {
-                System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }?.let {
-                    return Paths.get(it).resolve("AIChatApp").toAbsolutePath().normalize()
-                }
-            }
-
-            System.getProperty("user.home")?.takeIf { it.isNotBlank() }?.let {
-                return Paths.get(it).resolve(".aichat").toAbsolutePath().normalize()
-            }
-
-            return Paths.get("").toAbsolutePath().normalize()
-        }
-
-        private fun isWindows(): Boolean {
-            return System.getProperty("os.name").contains("windows", ignoreCase = true)
-        }
+        fun defaultHistoryPath(): Path = AppPaths.historyPath()
     }
 }

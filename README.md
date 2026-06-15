@@ -46,7 +46,7 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
 
 ## Context Management
 
@@ -66,6 +66,67 @@ In `/settings`, use `set contextStrategy <sliding|facts>`, `set contextWindow <n
 Sticky facts can still be collected immediately from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. With the `facts` strategy enabled, the app also sends a small extraction prompt before the main assistant response so the model can turn natural user messages into stored facts.
 
 Branching is a chat feature, not a context strategy. Use `/checkpoint`, then `/branch create <name>` to create an independent continuation from that checkpoint or from the current dialog if no checkpoint exists. Use `/branch switch <name>` to enter a branch and `/branch switch main` to return to the main chat. Each branch keeps independent messages, sticky facts, and summary state. The selected context strategy and automatic summary option apply only to the active chat or branch.
+
+## Markdown Memory
+
+AIChatApp also keeps Markdown memory in files next to `chat-history.json`. The app directory uses the same lookup order as chat history:
+
+```text
+-Daichat.history.dir
+APP_HOME
+%LOCALAPPDATA%/AIChatApp on Windows
+$HOME/.aichat on Unix-like systems
+```
+
+Memory files are always active and do not have `local.properties` settings:
+
+```text
+<app-dir>/memory/permanent.md
+<app-dir>/memory/personal.md
+<app-dir>/memory/work/main.md
+<app-dir>/memory/work/<branch>.md
+```
+
+The three memory types are:
+
+- Permanent memory: global Markdown instructions and constraints. It is read as a system block and is never changed automatically by the model.
+- Personal memory: durable user communication and workflow preferences. The real DeepSeek agent updates it with an internal extraction request, and the app also reinforces local frequency signals such as repeated Python/Kotlin/code-language requests or detailed-explanation requests. Demo mode uses the same local signal reinforcement without real API calls.
+- Working memory: branch-specific task state with `Status: PENDING` or `Status: DONE`. The status is changed locally before and after assistant requests, without using the model.
+
+Personal memory items are stored as weighted constraints:
+
+```md
+- [strength: 1] Prefers Kotlin for code-related tasks
+- [strength: 3] Prefers detailed explanations
+```
+
+Legacy plain bullets such as `- Prefers Kotlin` are still accepted as `strength: 1`. When the same constraint appears again, AIChatApp increments its strength instead of duplicating the bullet. Higher strength means the preference has been observed more often and should be applied more readily when relevant to a future answer.
+
+For example, three prompts asking for Python code will reinforce:
+
+```md
+- [strength: 3] Works with Python for code-related tasks
+```
+
+Memory system blocks are inserted after the base system prompt and before summary, sticky facts, and recent dialog messages. The base system prompt remains first, including after `/settings set systemPrompt ...`.
+
+Use these commands inside chat:
+
+```text
+/memory
+/memory show permanent
+/memory show personal
+/memory show work
+/memory status
+/memory done
+/memory pending
+/memory path
+/memory reload
+```
+
+Markdown memory is separate from sticky facts. Sticky facts are the existing key-value memory stored in `chat-history.json` and controlled by the `facts` context strategy. Markdown memory lives only in `.md` files and is used regardless of the selected context strategy.
+
+Token usage and cost from the internal personal-memory extraction request are intentionally not saved in chat history, not shown by `/summary`, and not included in `totalUsage()`. Only normal assistant, summary, and sticky-facts usage remain part of user-visible accounting.
 
 ## JVM Distribution
 

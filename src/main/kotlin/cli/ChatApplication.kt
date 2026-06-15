@@ -9,11 +9,14 @@ import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import config.TokenPricing
 import formatting.ConsoleScreen
+import memory.MemoryRepository
+import memory.TaskStatus
 
 class ChatApplication(
     private val agent: AiAgent,
     initialSettings: AgentSettings,
     private val historyRepository: ChatHistoryRepository,
+    private val memoryRepository: MemoryRepository? = null,
     private val renderer: ConsoleRenderer,
     private val pricing: TokenPricing?,
     private val startupWarning: String? = null,
@@ -44,6 +47,7 @@ class ChatApplication(
                 userInput == "/help" -> renderer.renderHelp()
                 userInput == "/summary" -> renderer.renderSummary(historyRepository.totalUsage(), pricing)
                 userInput == "/facts" -> renderer.renderFacts(historyRepository.facts())
+                userInput.commandName() == "/memory" -> handleMemoryCommand(userInput)
                 userInput == "/checkpoint" -> {
                     historyRepository.checkpoint()
                     renderer.renderSystem("Checkpoint saved.")
@@ -100,8 +104,48 @@ class ChatApplication(
         }
     }
 
+    private fun handleMemoryCommand(command: String) {
+        val repository = memoryRepository
+        if (repository == null) {
+            renderer.renderError("Markdown memory is unavailable in this session.")
+            return
+        }
+        val parts = command.split(Regex("\\s+"), limit = 3)
+        when {
+            parts.size == 1 -> renderer.renderMemoryHelp()
+            parts.size >= 3 && parts[1].equals("show", ignoreCase = true) -> {
+                when (parts[2].lowercase()) {
+                    "permanent" -> renderer.renderMemory("Permanent Memory", repository.permanentMemory())
+                    "personal" -> renderer.renderMemory("Personal Memory", repository.personalMemory())
+                    "work" -> renderer.renderMemory("Working Memory", repository.workingMemory())
+                    else -> renderer.renderError("Usage: /memory show <permanent|personal|work>")
+                }
+            }
+            parts.size >= 2 && parts[1].equals("status", ignoreCase = true) -> {
+                renderer.renderSystem("Working memory status: ${repository.workingStatus().name}")
+            }
+            parts.size >= 2 && parts[1].equals("done", ignoreCase = true) -> {
+                repository.setWorkingStatus(TaskStatus.DONE)
+                renderer.renderSystem("Working memory status: DONE")
+            }
+            parts.size >= 2 && parts[1].equals("pending", ignoreCase = true) -> {
+                repository.setWorkingStatus(TaskStatus.PENDING)
+                renderer.renderSystem("Working memory status: PENDING")
+            }
+            parts.size >= 2 && parts[1].equals("path", ignoreCase = true) -> {
+                renderer.renderMemoryPaths(repository.paths())
+            }
+            parts.size >= 2 && parts[1].equals("reload", ignoreCase = true) -> {
+                repository.ensureInitialized()
+                renderer.renderSystem("Markdown memory files reloaded from disk.")
+            }
+            else -> renderer.renderError("Usage: /memory, /memory show <permanent|personal|work>, /memory status, /memory done, /memory pending, /memory path")
+        }
+    }
+
     private fun handleUserMessage(input: String) {
         renderer.renderUser(input)
+        memoryRepository?.setWorkingStatus(TaskStatus.PENDING)
 
         try {
             renderer.renderSystem("Sending request to the assistant...")
@@ -122,6 +166,7 @@ class ChatApplication(
             renderer.renderUsage(response.usage)
             renderer.renderFinishReason(response.finishReason)
             renderer.renderCost(response.usage, pricing)
+            memoryRepository?.setWorkingStatus(TaskStatus.DONE)
             renderStickyFactsIfNeeded()
         } catch (exception: AgentException) {
             renderer.renderError(exception.message ?: "Could not get an assistant response.")

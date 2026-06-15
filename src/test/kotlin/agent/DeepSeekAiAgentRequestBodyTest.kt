@@ -4,6 +4,8 @@ import chat.ChatHistoryRepository
 import chat.ChatMessage
 import chat.ContextStrategy
 import chat.Role
+import memory.MemoryRepository
+import memory.MemoryStore
 import java.net.Authenticator
 import java.net.CookieHandler
 import java.net.ProxySelector
@@ -12,6 +14,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.time.Duration
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
@@ -168,6 +171,208 @@ class DeepSeekAiAgentRequestBodyTest {
         assertEquals(chat.TokenUsage(inputTokens = 4, outputTokens = 4), repository.totalUsage())
     }
 
+    @Test
+    fun `memory system messages are sent in main request after base system prompt`() {
+        val directory = Files.createTempDirectory("aichat-agent-memory-context-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = memoryRepository(directory, repository)
+            val store = MemoryStore(directory.resolve("memory"))
+            memoryRepository.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent\n\nAlways prefer Kotlin.\n", StandardCharsets.UTF_8)
+            Files.writeString(store.personalPath(), "# Personal\n\n- Prefers concise answers\n", StandardCharsets.UTF_8)
+            store.writeWork("main", "# Working Memory\n\nStatus: PENDING\n\n## Current Task\nFinish memory tests.\n")
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("final answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    summaryInterval = 0,
+                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                    contextWindowMessages = 2,
+                    systemPrompt = "system"
+                ),
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("hello")
+
+            assertEquals(2, httpClient.requestBodies.size)
+            assertContains(httpClient.requestBodies[0], "Permanent memory:")
+            assertContains(httpClient.requestBodies[0], "Existing personal memory:")
+            assertContains(httpClient.requestBodies[0], "user: hello")
+            val mainBody = httpClient.requestBodies[1]
+            assertContains(mainBody, "\"role\":\"system\",\"content\":\"system\"")
+            assertContains(mainBody, "Permanent memory instructions:")
+            assertContains(mainBody, "Always prefer Kotlin.")
+            assertContains(mainBody, "Personal memory about the user:")
+            assertContains(mainBody, "Working memory for the active branch:")
+            assertContains(mainBody, "user\",\"content\":\"hello")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `personal memory extraction updates markdown without usage or event history`() {
+        val directory = Files.createTempDirectory("aichat-agent-personal-memory-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = memoryRepository(directory, repository)
+            memoryRepository.ensureInitialized()
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("- Prefers answers in Russian"),
+                    assistantResponse("final answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    summaryInterval = 0,
+                    systemPrompt = "system"
+                ),
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("remember: answer in Russian")
+
+            assertContains(memoryRepository.personalMemory(), "- [strength: 1] Prefers answers in Russian")
+            assertEquals(chat.TokenUsage(inputTokens = 1, outputTokens = 1), repository.totalUsage())
+            assertFalse(repository.all().any { it.role == Role.EVENT })
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `personal memory repeated bullets increase strength and no changes leaves file alone`() {
+        val directory = Files.createTempDirectory("aichat-agent-personal-memory-dedupe-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = memoryRepository(directory, repository)
+            val store = MemoryStore(directory.resolve("memory"))
+            memoryRepository.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent\n\nUse Kotlin.\n", StandardCharsets.UTF_8)
+            Files.writeString(store.personalPath(), "# Personal Memory\n\n- Prefers concise answers\n", StandardCharsets.UTF_8)
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("- Prefers concise answers\n- Use Kotlin."),
+                    assistantResponse("final answer"),
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("second answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    summaryInterval = 0,
+                    systemPrompt = "system"
+                ),
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("first")
+            val afterReinforcement = memoryRepository.personalMemory()
+            agent.send("second")
+
+            assertContains(afterReinforcement, "- [strength: 2] Prefers concise answers")
+            assertFalse(afterReinforcement.contains("Use Kotlin"))
+            assertEquals(afterReinforcement, memoryRepository.personalMemory())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `local programming language signals are saved even when extraction returns no changes`() {
+        val directory = Files.createTempDirectory("aichat-agent-local-language-signal-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = memoryRepository(directory, repository)
+            memoryRepository.ensureInitialized()
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("answer one"),
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("answer two"),
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("answer three")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    summaryInterval = 0,
+                    systemPrompt = "system"
+                ),
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("Напиши функцию на Python")
+            agent.send("Сделай Python пример")
+            agent.send("Объясни Python код")
+
+            assertContains(memoryRepository.personalMemory(), "- [strength: 3] Works with Python for code-related tasks")
+            assertEquals(chat.TokenUsage(inputTokens = 3, outputTokens = 3), repository.totalUsage())
+            assertFalse(repository.all().any { it.role == Role.EVENT })
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `markdown memory works with sticky facts strategy`() {
+        val directory = Files.createTempDirectory("aichat-agent-memory-sticky-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = memoryRepository(directory, repository)
+            val store = MemoryStore(directory.resolve("memory"))
+            memoryRepository.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent\n\nUse memory always.\n", StandardCharsets.UTF_8)
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("project_goal: test memory"),
+                    assistantResponse("final answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    contextStrategy = ContextStrategy.STICKY_FACTS,
+                    contextWindowMessages = 2,
+                    summaryInterval = 0,
+                    systemPrompt = "system"
+                ),
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("goal: test memory")
+
+            assertEquals(3, httpClient.requestBodies.size)
+            assertContains(httpClient.requestBodies[2], "Permanent memory instructions:")
+            assertContains(httpClient.requestBodies[2], "Sticky facts:")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     private fun buildRequestBody(
         settings: AgentSettings,
         history: List<ChatMessage> = listOf(ChatMessage(Role.USER, "hello"))
@@ -209,6 +414,12 @@ class DeepSeekAiAgentRequestBodyTest {
 
     private fun assistantResponse(content: String): String =
         """{"choices":[{"finish_reason":"stop","message":{"content":"${JsonTools.escape(content)}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+
+    private fun memoryRepository(
+        directory: java.nio.file.Path,
+        repository: ChatHistoryRepository
+    ): MemoryRepository =
+        MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
 
     @Suppress("UNCHECKED_CAST")
     private fun buildSummaryMessages(history: List<ChatMessage>): List<ChatMessage> {

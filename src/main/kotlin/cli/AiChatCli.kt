@@ -8,6 +8,9 @@ import chat.ChatHistoryStore
 import config.LocalPropertiesConfig
 import formatting.ConsoleEncoding
 import formatting.ConsoleScreen
+import chat.AppPaths
+import memory.MemoryRepository
+import memory.MemoryStore
 import kotlin.system.exitProcess
 
 private const val CLI_NAME = "aichat"
@@ -75,18 +78,25 @@ object AiChatCli {
                 restoredState = restoredState,
                 onChanged = historyStore::writeState
             )
+            val memoryRepository = MemoryRepository(
+                store = MemoryStore(AppPaths.memoryDirectory()),
+                activeBranchKeyProvider = historyRepository::activeBranchIdOrMain
+            )
+            memoryRepository.ensureInitialized()
 
             val agent = when (configResult) {
                 is LocalPropertiesConfig.Result.Success -> DeepSeekAiAgent(
                     historyRepository = historyRepository,
-                    initialSettings = configResult.settings
+                    initialSettings = configResult.settings,
+                    memoryRepository = memoryRepository
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
                     renderer.renderError(configResult.message)
                     renderer.renderSystem("No real key was found, so local demo mode is running without calling DeepSeek.")
                     MockAiAgent(
                         historyRepository = historyRepository,
-                        initialSettings = configResult.fallbackSettings
+                        initialSettings = configResult.fallbackSettings,
+                        memoryRepository = memoryRepository
                     )
                 }
             }
@@ -95,6 +105,7 @@ object AiChatCli {
                 agent = agent,
                 initialSettings = settings,
                 historyRepository = historyRepository,
+                memoryRepository = memoryRepository,
                 renderer = renderer,
                 pricing = pricing,
                 startupWarning = pricingWarning,
@@ -143,7 +154,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /summary, /memory, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }

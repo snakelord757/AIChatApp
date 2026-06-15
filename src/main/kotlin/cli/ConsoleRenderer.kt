@@ -7,6 +7,7 @@ import chat.TokenUsage
 import config.TokenPricing
 import formatting.Ansi
 import formatting.MarkdownConsoleFormatter
+import memory.MemoryPaths
 import java.util.Locale
 
 class ConsoleRenderer(
@@ -23,6 +24,7 @@ class ConsoleRenderer(
         println("${Ansi.style("/settings", Ansi.CYAN)} - open settings")
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
+        println("${Ansi.style("/memory", Ansi.CYAN)} - show Markdown memory commands")
         println("${Ansi.style("/checkpoint", Ansi.CYAN)} - save a branching checkpoint")
         println("${Ansi.style("/branch create <name>", Ansi.CYAN)} - create and activate a branch")
         println("${Ansi.style("/branch list", Ansi.CYAN)} - list branches")
@@ -130,6 +132,36 @@ class ConsoleRenderer(
                 println("$marker $name")
             }
         }
+        println()
+    }
+
+    fun renderMemoryHelp() {
+        println()
+        println(Ansi.style("Markdown Memory", Ansi.BOLD, Ansi.CYAN))
+        println("/memory show permanent - show global Markdown instructions")
+        println("/memory show personal - show personal Markdown memory")
+        println("/memory show work - show working memory for the active branch")
+        println("/memory status - show active working memory status")
+        println("/memory done - set active working memory status to DONE")
+        println("/memory pending - set active working memory status to PENDING")
+        println("/memory path - show memory file paths")
+        println("/memory reload - make sure memory files exist and read current disk contents on next request")
+        println()
+    }
+
+    fun renderMemory(title: String, content: String) {
+        println()
+        println(Ansi.style(title, Ansi.BOLD, Ansi.CYAN))
+        println(content.ifBlank { "(empty)" })
+        println()
+    }
+
+    fun renderMemoryPaths(paths: MemoryPaths) {
+        println()
+        println(Ansi.style("Markdown Memory Paths", Ansi.BOLD, Ansi.CYAN))
+        println("Permanent: ${paths.permanent}")
+        println("Personal: ${paths.personal}")
+        println("Working: ${paths.work}")
         println()
     }
 

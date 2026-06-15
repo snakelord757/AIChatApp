@@ -7,10 +7,15 @@ import agent.SummaryEvents
 import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import chat.TokenUsage
+import memory.MemoryRepository
+import memory.MemoryStore
+import memory.TaskStatus
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.io.StringReader
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -212,6 +217,97 @@ class ChatApplicationCommandTest {
         assertContains(factsBlock, "Tokens: input=5, output=2, reasoning=1, total=8")
     }
 
+    @Test
+    fun `memory commands show and update markdown memory`() {
+        val directory = Files.createTempDirectory("aichat-memory-command-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val store = MemoryStore(directory.resolve("memory"))
+            val memoryRepository = MemoryRepository(store, repository::activeBranchIdOrMain)
+            memoryRepository.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent\n\nAlways test memory.\n", StandardCharsets.UTF_8)
+
+            val output = captureStdout {
+                ChatApplication(
+                    agent = RecordingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    memoryRepository = memoryRepository,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(
+                        BufferedReader(
+                            StringReader("/memory\n/memory show permanent\n/memory pending\n/memory status\n/memory done\n/exit\n")
+                        )
+                    )
+                ).run()
+            }
+
+            assertContains(output, "Markdown Memory")
+            assertContains(output, "Always test memory.")
+            assertContains(output, "Working memory status: PENDING")
+            assertContains(output, "Working memory status: DONE")
+            assertEquals(TaskStatus.DONE, memoryRepository.workingStatus())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `working memory status is pending during request and done after successful response`() {
+        val directory = Files.createTempDirectory("aichat-memory-status-command-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
+            val agent = StatusAssertingAgent(memoryRepository)
+
+            captureStdout {
+                ChatApplication(
+                    agent = agent,
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    memoryRepository = memoryRepository,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("hello\n/exit\n")))
+                ).run()
+            }
+
+            assertEquals(TaskStatus.PENDING, agent.statusDuringSend)
+            assertEquals(TaskStatus.DONE, memoryRepository.workingStatus())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `working memory stays pending after failed response`() {
+        val directory = Files.createTempDirectory("aichat-memory-failed-status-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
+
+            captureStdout {
+                ChatApplication(
+                    agent = FailingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    memoryRepository = memoryRepository,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("hello\n/exit\n")))
+                ).run()
+            }
+
+            assertEquals(TaskStatus.PENDING, memoryRepository.workingStatus())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     private fun captureStdout(block: () -> Unit): String {
         val originalOut = System.out
         val stream = ByteArrayOutputStream()
@@ -258,6 +354,27 @@ class ChatApplicationCommandTest {
             )
             repository.addAssistant("ok")
             return AgentResponse("ok")
+        }
+
+        override fun updateSettings(settings: AgentSettings) = Unit
+    }
+
+    private class StatusAssertingAgent(
+        private val memoryRepository: MemoryRepository
+    ) : AiAgent {
+        var statusDuringSend: TaskStatus? = null
+
+        override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
+            statusDuringSend = memoryRepository.workingStatus()
+            return AgentResponse("ok")
+        }
+
+        override fun updateSettings(settings: AgentSettings) = Unit
+    }
+
+    private class FailingAgent : AiAgent {
+        override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
+            throw agent.AgentException("boom")
         }
 
         override fun updateSettings(settings: AgentSettings) = Unit

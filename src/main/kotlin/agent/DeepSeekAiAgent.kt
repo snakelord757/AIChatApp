@@ -4,6 +4,7 @@ import chat.ChatHistoryRepository
 import chat.ChatMessage
 import chat.ContextStrategy
 import chat.Role
+import memory.MemoryRepository
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -15,14 +16,18 @@ import java.time.Duration
 class DeepSeekAiAgent(
     private val historyRepository: ChatHistoryRepository,
     initialSettings: AgentSettings,
+    private val memoryRepository: MemoryRepository? = null,
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 ) : AiAgent {
     private var settings = initialSettings
+    private val personalMemoryWindowMessages = 20
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
+        memoryRepository?.reinforcePersonalSignals(userMessage)
+        requestPersonalMemoryUpdate()
 
         if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
             requestFacts()?.let { response ->
@@ -44,7 +49,12 @@ class DeepSeekAiAgent(
             )
         }
 
-        val response = sendRequest(buildRequest(historyRepository.apiContextMessages(settings), settings))
+        val response = sendRequest(
+            buildRequest(
+                historyRepository.apiContextMessages(settings, memoryRepository?.contextMessages().orEmpty()),
+                settings
+            )
+        )
         val answer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val usage = JsonTools.extractUsage(response.body())
@@ -97,6 +107,21 @@ class DeepSeekAiAgent(
         val usage = JsonTools.extractUsage(response.body())
         val finishReason = JsonTools.extractFinishReason(response.body())
         return AgentResponse(content, usage, finishReason)
+    }
+
+    private fun requestPersonalMemoryUpdate() {
+        val repository = memoryRepository ?: return
+        val response = sendRequest(
+            buildRequest(
+                repository.personalExtractionMessages(
+                    recentMessages = historyRepository.personalMemorySourceMessages(personalMemoryWindowMessages),
+                    summary = historyRepository.activeSummaryText()
+                ),
+                settings
+            )
+        )
+        val content = JsonTools.extractAssistantContent(response.body()) ?: return
+        repository.appendPersonalBullets(content)
     }
 
     private fun factExtractionMessages(
