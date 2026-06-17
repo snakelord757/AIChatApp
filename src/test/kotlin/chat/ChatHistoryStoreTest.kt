@@ -164,6 +164,40 @@ class ChatHistoryStoreTest {
     }
 
     @Test
+    fun `store normalizes restored generated blockquotes without changing user input`() {
+        val directory = Files.createTempDirectory("aichat-history-prompt-marker-test")
+        try {
+            val path = directory.resolve("chat-history.json")
+            ChatHistoryStore.open(path).use { store ->
+                store.writeState(
+                    ChatHistoryState(
+                        messages = listOf(
+                            ChatMessage(Role.SYSTEM, "system"),
+                            ChatMessage(Role.USER, "> user quote"),
+                            ChatMessage(Role.ASSISTANT, "Answer\n> generated quote"),
+                            ChatMessage(Role.EVENT, "Stage EXECUTION: success\nSummary: ok\n\n> detail")
+                        )
+                    )
+                )
+            }
+
+            ChatHistoryStore.open(path).use { store ->
+                assertEquals(
+                    listOf(
+                        ChatMessage(Role.SYSTEM, "system"),
+                        ChatMessage(Role.USER, "> user quote"),
+                        ChatMessage(Role.ASSISTANT, "Answer\nNote: generated quote"),
+                        ChatMessage(Role.EVENT, "Stage EXECUTION: success\nSummary: ok\n\nNote: detail")
+                    ),
+                    store.readState().messages
+                )
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `json round trips new state fields and decodes legacy object`() {
         val state = ChatHistoryState(
             messages = listOf(ChatMessage(Role.SYSTEM, "system")),

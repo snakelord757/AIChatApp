@@ -30,6 +30,10 @@ object AppPaths {
 
     fun memoryDirectory(): Path = applicationDirectory().resolve("memory")
 
+    fun taskStatePath(): Path = applicationDirectory().resolve("task-state.json")
+
+    fun taskStageAuditPath(): Path = applicationDirectory().resolve("task-stage-audit.jsonl")
+
     private fun isWindows(): Boolean =
         System.getProperty("os.name").contains("windows", ignoreCase = true)
 }

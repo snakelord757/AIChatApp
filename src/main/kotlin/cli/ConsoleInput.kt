@@ -17,6 +17,8 @@ class ConsoleInput(
         return fallbackReader.readLine()
     }
 
+    fun isInteractive(): Boolean = System.console() != null
+
     companion object {
         private fun createFallbackReader(): BufferedReader {
             val decoder = ConsoleEncoding.inputCharset()

@@ -11,6 +11,16 @@ import formatting.ConsoleScreen
 import chat.AppPaths
 import memory.MemoryRepository
 import memory.MemoryStore
+import task.DeepSeekStageChatClient
+import task.DefaultStageAgentFactory
+import task.StageChatClient
+import task.StageChatResponse
+import task.TaskStage
+import task.TaskOrchestrator
+import task.JsonlTaskStageAuditStore
+import task.OrchestratorTaskContextProvider
+import task.TaskStateStore
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 private const val CLI_NAME = "aichat"
@@ -72,6 +82,7 @@ object AiChatCli {
                 is LocalPropertiesConfig.Result.Success -> configResult.pricingWarning
                 is LocalPropertiesConfig.Result.Failure -> configResult.pricingWarning
             }
+            val settingsRef = AtomicReference(settings)
 
             val historyRepository = ChatHistoryRepository(
                 systemPrompt = settings.systemPrompt,
@@ -100,12 +111,32 @@ object AiChatCli {
                     )
                 }
             }
+            val stageClientFactory = {
+                when (configResult) {
+                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(configResult.settings)
+                    is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
+                }
+            }
+            val taskOrchestrator = TaskOrchestrator(
+                historyRepository = historyRepository,
+                memoryRepository = memoryRepository,
+                stateStore = TaskStateStore(AppPaths.taskStatePath()),
+                stageAgentFactory = DefaultStageAgentFactory(stageClientFactory),
+                stageAuditStore = JsonlTaskStageAuditStore(AppPaths.taskStageAuditPath()),
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { settingsRef.get() },
+                    historyRepository = historyRepository,
+                    memoryRepository = memoryRepository
+                )
+            )
 
             ChatApplication(
                 agent = agent,
                 initialSettings = settings,
                 historyRepository = historyRepository,
                 memoryRepository = memoryRepository,
+                taskOrchestrator = taskOrchestrator,
+                onSettingsChanged = settingsRef::set,
                 renderer = renderer,
                 pricing = pricing,
                 startupWarning = pricingWarning,
@@ -154,7 +185,30 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /memory, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /summary, /facts, /memory, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
+}
+
+private class DemoStageChatClient : StageChatClient {
+    override fun send(messages: List<chat.ChatMessage>): StageChatResponse {
+        val stage = when {
+            messages.firstOrNull()?.content?.contains("PlanningAgent") == true -> TaskStage.PLANNING
+            messages.firstOrNull()?.content?.contains("ExecutionAgent") == true -> TaskStage.EXECUTION
+            messages.firstOrNull()?.content?.contains("ValidationAgent") == true -> TaskStage.VALIDATION
+            messages.firstOrNull()?.content?.contains("CompletionAgent") == true -> TaskStage.COMPLETION
+            else -> TaskStage.EXECUTION
+        }
+        val output = when (stage) {
+            TaskStage.PLANNING -> "Demo plan: understand the request, execute it, validate the result, then summarize the outcome."
+            TaskStage.EXECUTION -> "Demo execution completed. Add a real DEEPSEEK_API_KEY to local.properties for model-backed execution."
+            TaskStage.VALIDATION -> "Demo validation passed."
+            TaskStage.COMPLETION -> "Demo task completed. Add DEEPSEEK_API_KEY to local.properties to receive real staged answers."
+        }
+        return StageChatResponse(
+            """
+            {"success":true,"summary":"${stage.name} completed","output":"$output","issues":[],"requestedChanges":[],"retryReason":null}
+            """.trimIndent()
+        )
+    }
 }

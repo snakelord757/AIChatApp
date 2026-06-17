@@ -10,18 +10,89 @@ import chat.TokenUsage
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
+import task.StageAgent
+import task.StageAgentFactory
+import task.StageInput
+import task.StageResult
+import task.TaskOrchestrator
+import task.TaskStage
+import task.TaskStateStore
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ChatApplicationCommandTest {
+    @Test
+    fun `input prompt marker is stripped before sending message`() {
+        val agent = RecordingAgent()
+
+        captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("> hello\n/exit\n")))
+            ).run()
+        }
+
+        assertEquals(listOf("hello"), agent.messages)
+    }
+
+    @Test
+    fun `input prompt marker is stripped when it is glued to message`() {
+        val agent = RecordingAgent()
+
+        captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(
+                    BufferedReader(
+                        StringReader(">hello\n>\u00A0world\n\uFF1E/fullwidth\n/exit\n")
+                    )
+                )
+            ).run()
+        }
+
+        assertEquals(listOf("hello", "world"), agent.messages)
+    }
+
+    @Test
+    fun `input prompt marker is stripped before command handling`() {
+        val agent = RecordingAgent()
+
+        val output = captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("> /exit\n")))
+            ).run()
+        }
+
+        assertEquals(emptyList(), agent.messages)
+        assertContains(output, "Goodbye!")
+    }
+
     @Test
     fun `russian slash command aliases are rejected`() {
         val output = captureStdout {
@@ -255,6 +326,94 @@ class ChatApplicationCommandTest {
     }
 
     @Test
+    fun `help includes pause command`() {
+        val output = captureStdout {
+            ChatApplication(
+                agent = RecordingAgent(),
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("/help\n/exit\n")))
+            ).run()
+        }
+
+        assertContains(output, "/pause")
+    }
+
+    @Test
+    fun `pause command marks working memory paused`() {
+        val directory = Files.createTempDirectory("aichat-pause-command-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
+            memoryRepository.ensureInitialized()
+
+            val output = captureStdout {
+                ChatApplication(
+                    agent = RecordingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    memoryRepository = memoryRepository,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("/pause\n/exit\n")))
+                ).run()
+            }
+
+            assertContains(output, "Task paused.")
+            assertEquals(TaskStatus.PAUSED, memoryRepository.workingStatus())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `pause command can stop a running orchestrated task immediately`() {
+        val directory = Files.createTempDirectory("aichat-running-pause-command-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val memoryRepository = MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
+            memoryRepository.ensureInitialized()
+            val stageStarted = CountDownLatch(1)
+            val interrupted = CountDownLatch(1)
+            val orchestrator = TaskOrchestrator(
+                historyRepository = repository,
+                memoryRepository = memoryRepository,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = BlockingStageFactory(stageStarted, interrupted)
+            )
+
+            val output = captureStdout {
+                ChatApplication(
+                    agent = RecordingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    memoryRepository = memoryRepository,
+                    taskOrchestrator = orchestrator,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("long task\n/pause\n/exit\n")))
+                ).run()
+            }
+
+            assertContains(output, "Task started. You can type /pause")
+            assertContains(output, "Pause requested.")
+            assertContains(output, "Stopping the current stage")
+            assertTrue(
+                stageStarted.count == 1L || interrupted.count == 0L,
+                "Pause should either stop before the stage starts or interrupt the running stage."
+            )
+            assertEquals(TaskStatus.PAUSED, memoryRepository.workingStatus())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `working memory status is pending during request and done after successful response`() {
         val directory = Files.createTempDirectory("aichat-memory-status-command-test")
         try {
@@ -378,5 +537,27 @@ class ChatApplicationCommandTest {
         }
 
         override fun updateSettings(settings: AgentSettings) = Unit
+    }
+
+    private class BlockingStageFactory(
+        private val stageStarted: CountDownLatch,
+        private val interrupted: CountDownLatch
+    ) : StageAgentFactory {
+        override fun create(stage: TaskStage): StageAgent = object : StageAgent {
+            override val stage: TaskStage = stage
+            override val history = emptyList<chat.ChatMessage>()
+
+            override fun execute(input: StageInput): StageResult {
+                stageStarted.countDown()
+                try {
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(5))
+                } catch (exception: InterruptedException) {
+                    interrupted.countDown()
+                    Thread.currentThread().interrupt()
+                    throw exception
+                }
+                return StageResult(stage, success = true, summary = "$stage done", output = "$stage output")
+            }
+        }
     }
 }

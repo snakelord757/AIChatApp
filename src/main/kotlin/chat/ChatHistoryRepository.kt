@@ -1,6 +1,7 @@
 package chat
 
 import agent.AgentSettings
+import formatting.CliPromptMarkerNormalizer
 import java.util.UUID
 
 class ChatHistoryRepository(
@@ -37,8 +38,10 @@ class ChatHistoryRepository(
         }
     }
 
+    @Synchronized
     fun all(): List<ChatMessage> = activeMessages().toList()
 
+    @Synchronized
     fun state(): ChatHistoryState = ChatHistoryState(
         messages = messages.toList(),
         summary = summary,
@@ -50,14 +53,22 @@ class ChatHistoryRepository(
         checkpoint = checkpoint
     )
 
+    @Synchronized
     fun addUser(content: String) {
         updateFacts(content)
         appendMessage(ChatMessage(Role.USER, content))
         persist()
     }
 
+    @Synchronized
     fun addAssistant(content: String, usage: TokenUsage? = null) {
-        appendMessage(ChatMessage(Role.ASSISTANT, content, usage))
+        appendMessage(ChatMessage(Role.ASSISTANT, CliPromptMarkerNormalizer.normalizeGeneratedText(content), usage))
+        persist()
+    }
+
+    @Synchronized
+    fun addEvent(content: String) {
+        appendMessage(ChatMessage(Role.EVENT, CliPromptMarkerNormalizer.normalizeGeneratedText(content)))
         persist()
     }
 

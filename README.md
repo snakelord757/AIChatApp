@@ -14,6 +14,7 @@ DEEPSEEK_TOKEN_PRICE_PER_1M_USD=0.28
 AI_CHAT_SUMMARY_INTERVAL=20
 AI_CHAT_CONTEXT_STRATEGY=sliding
 AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
+AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=false
 ```
 
 `local.properties` is ignored by Git. Do not commit real API keys.
@@ -46,7 +47,11 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+
+Use `/pause` to mark the active task as paused. If a model request is already in flight, the CLI records a pause flag and does not start the next task stage after the current request returns. When input ends or the CLI closes while a task is active, the task state is also saved as paused so the next run can show that it was interrupted.
+
+Use `/resume` to continue a paused task. `/resume <extra context>` stores the extra text as task clarification instead of starting a new task. A plain chat message such as `continue task` or `продолжи задачу` also resumes the paused task when one exists.
 
 ## Context Management
 
@@ -62,6 +67,39 @@ AI_CHAT_SUMMARY_INTERVAL=0
 ```
 
 In `/settings`, use `set contextStrategy <sliding|facts>`, `set contextWindow <number>`, and `set summaryInterval <number>`.
+
+Clarifying questions are disabled by default. Enable them in `local.properties` only when you want the task orchestrator to ask the user for missing information before continuing:
+
+```properties
+AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=true
+```
+
+## Task Orchestration
+
+User tasks are executed by a task orchestrator as a strict finite-state machine:
+
+```text
+PLANNING -> EXECUTION -> VALIDATION -> COMPLETION
+```
+
+`VALIDATION` can send the task back to `EXECUTION` when it finds problems. `COMPLETION` is final, and code-level transition checks reject skipped stages such as `PLANNING -> VALIDATION`.
+
+Each task stage has its own stage-agent role:
+
+- `PlanningAgent`
+- `ExecutionAgent`
+- `ValidationAgent`
+- `CompletionAgent`
+
+Stage agents keep their own message history. Their private stage history is not written into the shared chat history. The orchestrator owns shared chat history, permanent memory, personal memory, and working memory; stage agents receive only the user task, the previous stage result, accumulated stage summaries, clarifications approved by the orchestrator, and allowed working context. Context strategies such as `sliding` and `facts` are evaluated only by the orchestrator, which passes a prepared context snapshot to stage agents instead of exposing strategy settings or repositories to them.
+
+Each stage returns a structured `StageResult` with the stage, success flag, summary, output, issues, requested changes or retry reason, and token usage when available. The orchestrator passes each result to the next legal stage and writes the final completion output into the public chat history.
+
+The latest task lifecycle is stored next to `chat-history.json` as `task-state.json`. Lifecycle status is separate from task stage and can be `ACTIVE`, `PAUSED`, `DONE`, or `FAILED`.
+
+When validation repeatedly fails, the task is paused instead of cycling forever between `EXECUTION` and `VALIDATION`. The pause reason is saved in `task-state.json`, and the user can provide missing details with `/resume <details>`.
+
+Stage-call diagnostics are stored separately as `task-stage-audit.jsonl` next to `chat-history.json`. This audit file records each stage prompt, raw response, parsed `StageResult`, attempt number, timestamp, and token usage without adding those messages to the public chat history or rendering them in normal chat output.
 
 Sticky facts can still be collected immediately from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. With the `facts` strategy enabled, the app also sends a small extraction prompt before the main assistant response so the model can turn natural user messages into stored facts.
 
@@ -91,7 +129,7 @@ The three memory types are:
 
 - Permanent memory: global Markdown instructions and constraints. It is read as a system block and is never changed automatically by the model.
 - Personal memory: durable user communication and workflow preferences. The real DeepSeek agent updates it with an internal extraction request, and the app also reinforces local frequency signals such as repeated Python/Kotlin/code-language requests or detailed-explanation requests. Demo mode uses the same local signal reinforcement without real API calls.
-- Working memory: branch-specific task state with `Status: PENDING` or `Status: DONE`. The status is changed locally before and after assistant requests, without using the model.
+- Working memory: branch-specific task state with `Status: PENDING`, `Status: PAUSED`, or `Status: DONE`. The status is changed locally before and after assistant requests or `/pause`, without using the model.
 
 Personal memory items are stored as weighted constraints:
 
@@ -123,6 +161,8 @@ Use these commands inside chat:
 /memory path
 /memory reload
 ```
+
+Markdown memory belongs to the orchestrator and the main chat flow. Stage agents do not read permanent or personal memory directly and do not update user memory.
 
 Markdown memory is separate from sticky facts. Sticky facts are the existing key-value memory stored in `chat-history.json` and controlled by the `facts` context strategy. Markdown memory lives only in `.md` files and is used regardless of the selected context strategy.
 

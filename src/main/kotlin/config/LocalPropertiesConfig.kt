@@ -74,6 +74,11 @@ object LocalPropertiesConfig {
             ?.toIntOrNull()
             ?.takeIf { it >= 0 }
             ?: fallback.contextWindowMessages
+        val allowClarifyingQuestions = properties.getProperty("AI_CHAT_ALLOW_CLARIFYING_QUESTIONS")
+            ?.trim()
+            ?.lowercase()
+            ?.let { it == "true" || it == "1" || it == "yes" }
+            ?: fallback.allowClarifyingQuestions
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -91,7 +96,8 @@ object LocalPropertiesConfig {
                 model = model,
                 summaryInterval = summaryInterval,
                 contextStrategy = contextStrategy,
-                contextWindowMessages = contextWindowMessages
+                contextWindowMessages = contextWindowMessages,
+                allowClarifyingQuestions = allowClarifyingQuestions
             ),
             pricing,
             pricingWarning

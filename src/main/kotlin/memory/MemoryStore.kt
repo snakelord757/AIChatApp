@@ -64,7 +64,8 @@ class MemoryStore(
             normalized == permanentTemplate.trim() ||
             normalized == personalTemplate.trim() ||
             normalized == workTemplate(TaskStatus.DONE).trim() ||
-            normalized == workTemplate(TaskStatus.PENDING).trim()
+            normalized == workTemplate(TaskStatus.PENDING).trim() ||
+            normalized == workTemplate(TaskStatus.PAUSED).trim()
     }
 
     fun parseStatus(content: String): TaskStatus? {
@@ -108,6 +109,6 @@ class MemoryStore(
             ## Notes
         """.trimIndent() + "\n"
 
-        private val statusPattern = Regex("""(?im)^Status:\s*(PENDING|DONE)\s*$""")
+        private val statusPattern = Regex("""(?im)^Status:\s*(PENDING|PAUSED|DONE)\s*$""")
     }
 }

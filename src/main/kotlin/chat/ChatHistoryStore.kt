@@ -1,5 +1,6 @@
 package chat
 
+import formatting.CliPromptMarkerNormalizer
 import java.io.Closeable
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -29,18 +30,14 @@ class ChatHistoryStore private constructor(
         val json = StandardCharsets.UTF_8.decode(bytes).toString().trim()
         if (json.isEmpty()) return ChatHistoryState()
         val state = ChatHistoryJson.decodeState(json)
-        val restoredMessages = state.messages.map { message ->
-                message.copy(content = MojibakeRepair.repair(message.content))
-            }
+        val restoredMessages = state.messages.map(::repairRestoredMessage)
         return state.copy(
             messages = addMissingSummaryEvent(restoredMessages, state.summary),
             summary = state.summary?.copy(content = MojibakeRepair.repair(state.summary.content)),
             facts = state.facts.mapValues { (_, value) -> MojibakeRepair.repair(value) },
             branches = state.branches.map { branch ->
                 val repairedSummary = branch.summary?.copy(content = MojibakeRepair.repair(branch.summary.content))
-                val repairedMessages = branch.messages.map { message ->
-                    message.copy(content = MojibakeRepair.repair(message.content))
-                }
+                val repairedMessages = branch.messages.map(::repairRestoredMessage)
                 branch.copy(
                     name = MojibakeRepair.repair(branch.name),
                     messages = addMissingSummaryEvent(repairedMessages, repairedSummary),
@@ -49,9 +46,7 @@ class ChatHistoryStore private constructor(
                 )
             },
             checkpoint = state.checkpoint?.copy(
-                messages = state.checkpoint.messages.map { message ->
-                    message.copy(content = MojibakeRepair.repair(message.content))
-                },
+                messages = state.checkpoint.messages.map(::repairRestoredMessage),
                 summary = state.checkpoint.summary?.copy(
                     content = MojibakeRepair.repair(state.checkpoint.summary.content)
                 ),
@@ -89,6 +84,15 @@ class ChatHistoryStore private constructor(
 
         val insertIndex = (summary.lastMessageIndex + 1).coerceIn(0, messages.size)
         return messages.take(insertIndex) + event + messages.drop(insertIndex)
+    }
+
+    private fun repairRestoredMessage(message: ChatMessage): ChatMessage {
+        val repaired = MojibakeRepair.repair(message.content)
+        val content = when (message.role) {
+            Role.ASSISTANT, Role.EVENT -> CliPromptMarkerNormalizer.normalizeGeneratedText(repaired)
+            Role.SYSTEM, Role.USER -> repaired
+        }
+        return message.copy(content = content)
     }
 
     override fun close() {

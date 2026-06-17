@@ -4,6 +4,7 @@ import agent.AgentSettings
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class ChatHistoryRepositoryTest {
     @Test
@@ -92,6 +93,25 @@ class ChatHistoryRepositoryTest {
             ),
             repository.apiContextMessages()
         )
+    }
+
+    @Test
+    fun `generated assistant and event blockquotes are not stored as input prompt markers`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        repository.addUser("> user text stays untouched")
+        repository.addAssistant("Answer\n> **Conclusion:** safe")
+        repository.addEvent("Stage EXECUTION: success\nSummary: ok\n\n> detail")
+
+        val user = repository.all().first { it.role == Role.USER }.content
+        val assistant = repository.all().first { it.role == Role.ASSISTANT }.content
+        val event = repository.all().first { it.role == Role.EVENT }.content
+
+        assertEquals("> user text stays untouched", user)
+        assertFalse(assistant.contains("\n> "))
+        assertFalse(event.contains("\n> "))
+        assertContains(assistant, "Note: **Conclusion:** safe")
+        assertContains(event, "Note: detail")
     }
 
     @Test

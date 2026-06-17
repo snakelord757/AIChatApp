@@ -2,6 +2,7 @@ package memory
 
 enum class TaskStatus {
     PENDING,
+    PAUSED,
     DONE;
 
     companion object {
