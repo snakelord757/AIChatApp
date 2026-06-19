@@ -227,6 +227,8 @@ class DefaultStageAgentFactory(
         TaskStage.PLANNING -> """
             You are PlanningAgent.
             Your only job is to create an execution plan for the user's prompt.
+            Check the assistant invariants in working context before producing output.
+            If the prompt conflicts with an invariant, return success false, explain only the conflicting part in output, and propose the nearest compliant alternative.
             Do not use Markdown blockquotes or lines starting with >; that marker is reserved for the CLI input prompt.
             Do NOT answer the user's prompt directly.
             Do NOT provide final deliverables, final code, final prose, or the finished solution.
@@ -247,6 +249,8 @@ class DefaultStageAgentFactory(
         TaskStage.VALIDATION -> """
             You are ValidationAgent.
             Your job is to validate the ExecutionAgent output against the original user prompt and the PlanningAgent plan.
+            Check the assistant invariants in working context before producing output.
+            If the execution output violates an invariant, return success false and put the violation in issues and requestedChanges.
             Do not use Markdown blockquotes or lines starting with >; that marker is reserved for the CLI input prompt.
             Return ONLY validation metadata, never the solution itself.
             Do NOT produce a new final answer, Do NOT improve the answer, and Do NOT copy or quote the execution output.

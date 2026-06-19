@@ -3,17 +3,20 @@ package agent
 import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import chat.TokenUsage
+import invariants.InvariantRepository
 import memory.MemoryRepository
 
 class MockAiAgent(
     private val historyRepository: ChatHistoryRepository,
     initialSettings: AgentSettings,
+    private val invariantRepository: InvariantRepository? = null,
     private val memoryRepository: MemoryRepository? = null
 ) : AiAgent {
     private var settings = initialSettings
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
         historyRepository.addUser(userMessage)
+        invariantRepository?.contextMessages()
         memoryRepository?.contextMessages()
         memoryRepository?.reinforcePersonalSignals(userMessage)
         if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {

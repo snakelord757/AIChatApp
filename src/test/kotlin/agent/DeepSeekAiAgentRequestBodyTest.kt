@@ -4,6 +4,8 @@ import chat.ChatHistoryRepository
 import chat.ChatMessage
 import chat.ContextStrategy
 import chat.Role
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import java.net.Authenticator
@@ -25,6 +27,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DeepSeekAiAgentRequestBodyTest {
     @Test
@@ -214,6 +217,88 @@ class DeepSeekAiAgentRequestBodyTest {
             assertContains(mainBody, "Personal memory about the user:")
             assertContains(mainBody, "Working memory for the active branch:")
             assertContains(mainBody, "user\",\"content\":\"hello")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `invariants are sent after base prompt before markdown memory`() {
+        val directory = Files.createTempDirectory("aichat-agent-invariants-context-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Never use Java.\n", StandardCharsets.UTF_8)
+            val memoryRepository = memoryRepository(directory, repository)
+            val store = MemoryStore(directory.resolve("memory"))
+            memoryRepository.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent\n\nAlways prefer Kotlin.\n", StandardCharsets.UTF_8)
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("NO_CHANGES"),
+                    assistantResponse("final answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    summaryInterval = 0,
+                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                    systemPrompt = "system"
+                ),
+                invariantRepository = invariantRepository,
+                memoryRepository = memoryRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("hello")
+
+            val mainBody = httpClient.requestBodies[1]
+            val systemIndex = mainBody.indexOf("\"content\":\"system\"")
+            val invariantIndex = mainBody.indexOf("Assistant invariants:")
+            val memoryIndex = mainBody.indexOf("Permanent memory instructions:")
+            assertTrue(systemIndex >= 0)
+            assertTrue(invariantIndex > systemIndex)
+            assertTrue(memoryIndex > invariantIndex)
+            assertContains(mainBody, "Never use Java.")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `sticky facts strategy still includes invariants`() {
+        val directory = Files.createTempDirectory("aichat-agent-invariants-facts-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Keep base prompt first.\n", StandardCharsets.UTF_8)
+            val httpClient = RecordingHttpClient(
+                listOf(
+                    assistantResponse("project: invariants"),
+                    assistantResponse("final answer")
+                )
+            )
+            val agent = DeepSeekAiAgent(
+                historyRepository = repository,
+                initialSettings = AgentSettings(
+                    apiKey = "key",
+                    contextStrategy = ContextStrategy.STICKY_FACTS,
+                    contextWindowMessages = 2,
+                    summaryInterval = 0,
+                    systemPrompt = "system"
+                ),
+                invariantRepository = invariantRepository,
+                httpClient = httpClient
+            )
+
+            agent.send("goal: include invariants")
+
+            assertEquals(2, httpClient.requestBodies.size)
+            assertContains(httpClient.requestBodies[1], "Assistant invariants:")
+            assertContains(httpClient.requestBodies[1], "Keep base prompt first.")
+            assertContains(httpClient.requestBodies[1], "Sticky facts:")
         } finally {
             directory.toFile().deleteRecursively()
         }

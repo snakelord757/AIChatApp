@@ -111,6 +111,21 @@ class TaskOrchestrator(
             events.onStageCompleted(result)
             historyRepository.addEvent(stageHistoryEvent(result))
 
+            if (result.stage == TaskStage.PLANNING && !result.success) {
+                val completed = state.copy(
+                    lifecycleStatus = TaskLifecycleStatus.DONE,
+                    currentStage = TaskStage.COMPLETION,
+                    results = state.results + result,
+                    stages = state.stages + StageState(TaskStage.COMPLETION),
+                    updatedAt = Instant.now()
+                )
+                activeTask = completed
+                save(completed)
+                memoryRepository?.setWorkingStatus(TaskStatus.DONE)
+                historyRepository.addAssistant(result.output, result.tokenUsage)
+                return OrchestratorResponse(result.output, result.tokenUsage)
+            }
+
             if (shouldPauseForInvalidTask(state, result)) {
                 val paused = pauseWithResult(
                     state = state,
@@ -186,7 +201,6 @@ class TaskOrchestrator(
     }
 
     private fun shouldPauseForInvalidTask(state: TaskState, result: StageResult): Boolean {
-        if (result.stage == TaskStage.PLANNING && !result.success) return true
         if (result.stage != TaskStage.VALIDATION || result.success) return false
         val failures = state.results.count { it.stage == TaskStage.VALIDATION && !it.success } + 1
         return failures >= maxValidationFailures || needsUserClarification(result)

@@ -156,6 +156,7 @@ class PromptedStageAgentTest {
         assert(systemPrompt.contains("Do NOT address ExecutionAgent directly"))
         assert(userPrompt.contains("lines starting with >"))
         assert(userPrompt.contains("Follow your stage contract exactly"))
+        assert(systemPrompt.contains("Check the assistant invariants"))
     }
 
     @Test
@@ -211,6 +212,7 @@ class PromptedStageAgentTest {
         assert(systemPrompt.contains("Do NOT produce a new final answer"))
         assert(systemPrompt.contains("Do NOT copy or quote the execution output"))
         assert(systemPrompt.contains("put details in issues and requestedChanges, not in output"))
+        assert(systemPrompt.contains("Check the assistant invariants"))
     }
 
     private class CapturingStageClient(
