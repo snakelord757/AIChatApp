@@ -32,6 +32,7 @@ class ConsoleRenderer(
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
         println("${Ansi.style("/memory", Ansi.CYAN)} - show Markdown memory commands")
+        println("${Ansi.style("/edit invariants", Ansi.CYAN)} - open assistant invariants")
         println("${Ansi.style("/pause", Ansi.CYAN)} - pause the active task")
         println("${Ansi.style("/resume", Ansi.CYAN)} - resume a paused task")
         println("${Ansi.style("/checkpoint", Ansi.CYAN)} - save a branching checkpoint")
@@ -265,7 +266,7 @@ class ConsoleRenderer(
 
     private fun StageResult.visibleStageOutput(): String =
         when (stage) {
-            TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
+            TaskStage.PROMPT_VALIDATION, TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
             TaskStage.PLANNING, TaskStage.COMPLETION -> ""
         }
 
@@ -315,7 +316,7 @@ class ConsoleRenderer(
 
     private fun StoredStageEvent.visibleOutput(): String =
         when (stage) {
-            TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
+            TaskStage.PROMPT_VALIDATION, TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
             TaskStage.PLANNING, TaskStage.COMPLETION -> ""
         }
 

@@ -156,6 +156,32 @@ class PromptedStageAgentTest {
         assert(systemPrompt.contains("Do NOT address ExecutionAgent directly"))
         assert(userPrompt.contains("lines starting with >"))
         assert(userPrompt.contains("Follow your stage contract exactly"))
+        assert(!systemPrompt.contains("assistant invariants", ignoreCase = true))
+        assert(!userPrompt.contains("invariants", ignoreCase = true))
+    }
+
+    @Test
+    fun `prompt validation agent checks invariants before other stages`() {
+        val client = CapturingStageClient(
+            """{"success":true,"summary":"accepted","output":"Prompt accepted.","issues":[],"requestedChanges":[],"retryReason":null}"""
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.PROMPT_VALIDATION)
+
+        agent.execute(
+            StageInput(
+                userTask = "Write code",
+                previousResult = null,
+                results = emptyList(),
+                workingContext = "Assistant invariants:\n- Use Kotlin.",
+                clarifications = emptyList()
+            )
+        )
+
+        val systemPrompt = client.messages.first().content
+        val userPrompt = client.messages.last().content
+        assert(systemPrompt.contains("PromptValidationAgent"))
+        assert(systemPrompt.contains("Check the assistant invariants"))
+        assert(userPrompt.contains("Assistant invariants:"))
     }
 
     @Test
@@ -211,6 +237,7 @@ class PromptedStageAgentTest {
         assert(systemPrompt.contains("Do NOT produce a new final answer"))
         assert(systemPrompt.contains("Do NOT copy or quote the execution output"))
         assert(systemPrompt.contains("put details in issues and requestedChanges, not in output"))
+        assert(systemPrompt.contains("Check the assistant invariants"))
     }
 
     private class CapturingStageClient(

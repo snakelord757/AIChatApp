@@ -11,6 +11,7 @@ object TaskStateMachine {
             throw InvalidTaskTransitionException("Result stage ${result.stage} does not match current stage $current.")
         }
         return when (current) {
+            TaskStage.PROMPT_VALIDATION -> if (result.success) TaskStage.PLANNING else TaskStage.COMPLETION
             TaskStage.PLANNING -> TaskStage.EXECUTION
             TaskStage.EXECUTION -> TaskStage.VALIDATION
             TaskStage.VALIDATION -> if (result.success) TaskStage.COMPLETION else TaskStage.EXECUTION
@@ -20,6 +21,7 @@ object TaskStateMachine {
 
     fun assertTransition(from: TaskStage, to: TaskStage) {
         val allowed = when (from) {
+            TaskStage.PROMPT_VALIDATION -> setOf(TaskStage.PLANNING, TaskStage.COMPLETION)
             TaskStage.PLANNING -> setOf(TaskStage.EXECUTION)
             TaskStage.EXECUTION -> setOf(TaskStage.VALIDATION)
             TaskStage.VALIDATION -> setOf(TaskStage.COMPLETION, TaskStage.EXECUTION)

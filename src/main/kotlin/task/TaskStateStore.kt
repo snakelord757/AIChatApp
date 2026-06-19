@@ -21,7 +21,7 @@ class TaskStateStore(
             ?: TaskLifecycleStatus.ACTIVE
         val stage = field(content, "currentStage")
             ?.let { runCatching { TaskStage.valueOf(it) }.getOrNull() }
-            ?: TaskStage.PLANNING
+            ?: TaskStage.PROMPT_VALIDATION
         val pauseReason = field(content, "pauseReason")
         val results = decodeResults(content)
         val createdAt = field(content, "createdAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
