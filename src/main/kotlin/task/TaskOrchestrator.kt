@@ -111,6 +111,21 @@ class TaskOrchestrator(
             events.onStageCompleted(result)
             historyRepository.addEvent(stageHistoryEvent(result))
 
+            if (result.stage == TaskStage.PROMPT_VALIDATION && !result.success) {
+                val completed = state.copy(
+                    lifecycleStatus = TaskLifecycleStatus.DONE,
+                    currentStage = TaskStage.COMPLETION,
+                    results = state.results + result,
+                    stages = state.stages + StageState(TaskStage.COMPLETION),
+                    updatedAt = Instant.now()
+                )
+                activeTask = completed
+                save(completed)
+                memoryRepository?.setWorkingStatus(TaskStatus.DONE)
+                historyRepository.addAssistant(result.output, result.tokenUsage)
+                return OrchestratorResponse(result.output, result.tokenUsage)
+            }
+
             if (shouldPauseForInvalidTask(state, result)) {
                 val paused = pauseWithResult(
                     state = state,
@@ -212,6 +227,7 @@ class TaskOrchestrator(
 
     private fun resumeStage(state: TaskState): TaskStage =
         when (state.currentStage) {
+            TaskStage.PROMPT_VALIDATION -> TaskStage.PROMPT_VALIDATION
             TaskStage.PLANNING -> TaskStage.PLANNING
             TaskStage.EXECUTION -> TaskStage.EXECUTION
             TaskStage.VALIDATION -> TaskStage.EXECUTION
@@ -280,7 +296,7 @@ class TaskOrchestrator(
 
     private fun StageResult.visibleHistoryOutput(): String =
         when (stage) {
-            TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
+            TaskStage.PROMPT_VALIDATION, TaskStage.EXECUTION, TaskStage.VALIDATION -> output.takeUnless { it.looksLikeRawJson() }.orEmpty()
             TaskStage.PLANNING, TaskStage.COMPLETION -> ""
         }
 

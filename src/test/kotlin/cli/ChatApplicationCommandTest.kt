@@ -7,6 +7,8 @@ import agent.SummaryEvents
 import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import chat.TokenUsage
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
@@ -23,6 +25,7 @@ import java.io.PrintStream
 import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -326,6 +329,84 @@ class ChatApplicationCommandTest {
     }
 
     @Test
+    fun `edit invariants opens file and does not add chat message`() {
+        val directory = Files.createTempDirectory("aichat-edit-invariants-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            val opener = RecordingFileOpener()
+
+            val output = captureStdout {
+                ChatApplication(
+                    agent = RecordingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    invariantRepository = invariantRepository,
+                    fileOpener = opener,
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("/edit invariants\n/exit\n")))
+                ).run()
+            }
+
+            val expectedPath = directory.resolve("invariants.md").toAbsolutePath().normalize()
+            assertEquals(listOf(expectedPath), opener.opened)
+            assertTrue(Files.exists(expectedPath))
+            assertContains(output, "Invariants file: $expectedPath")
+            assertEquals(listOf(chat.ChatMessage(chat.Role.SYSTEM, "system")), repository.all())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `edit invalid command shows usage`() {
+        val output = captureStdout {
+            ChatApplication(
+                agent = RecordingAgent(),
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("/edit\n/edit unknown\n/exit\n")))
+            ).run()
+        }
+
+        assertEquals(2, Regex("Usage: /edit invariants").findAll(output).count())
+    }
+
+    @Test
+    fun `clear does not modify invariants file`() {
+        val directory = Files.createTempDirectory("aichat-clear-invariants-test")
+        try {
+            val repository = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            invariantRepository.ensureInitialized()
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Preserve me.\n", StandardCharsets.UTF_8)
+
+            captureStdout {
+                ChatApplication(
+                    agent = RecordingAgent(),
+                    initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                    historyRepository = repository,
+                    invariantRepository = invariantRepository,
+                    fileOpener = RecordingFileOpener(),
+                    renderer = ConsoleRenderer(),
+                    pricing = null,
+                    showStartupWarning = false,
+                    input = ConsoleInput(BufferedReader(StringReader("hello\n/clear\n/exit\n")))
+                ).run()
+            }
+
+            assertEquals("# Assistant Invariants\n\n- Preserve me.\n", Files.readString(invariantRepository.path(), StandardCharsets.UTF_8))
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `help includes pause command`() {
         val output = captureStdout {
             ChatApplication(
@@ -537,6 +618,14 @@ class ChatApplicationCommandTest {
         }
 
         override fun updateSettings(settings: AgentSettings) = Unit
+    }
+
+    private class RecordingFileOpener : FileOpener {
+        val opened = mutableListOf<Path>()
+
+        override fun open(path: Path) {
+            opened.add(path.toAbsolutePath().normalize())
+        }
     }
 
     private class BlockingStageFactory(

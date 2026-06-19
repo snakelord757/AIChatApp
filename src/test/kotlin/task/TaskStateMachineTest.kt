@@ -6,6 +6,15 @@ import kotlin.test.assertFailsWith
 
 class TaskStateMachineTest {
     @Test
+    fun `prompt validation starts the stage flow`() {
+        val valid = StageResult(TaskStage.PROMPT_VALIDATION, success = true, summary = "valid", output = "Prompt accepted.")
+        val invalid = StageResult(TaskStage.PROMPT_VALIDATION, success = false, summary = "invalid", output = "Clarify task.")
+
+        assertEquals(TaskStage.PLANNING, TaskStateMachine.nextStage(TaskStage.PROMPT_VALIDATION, valid))
+        assertEquals(TaskStage.COMPLETION, TaskStateMachine.nextStage(TaskStage.PROMPT_VALIDATION, invalid))
+    }
+
+    @Test
     fun `planning cannot jump to validation`() {
         assertFailsWith<InvalidTaskTransitionException> {
             TaskStateMachine.assertTransition(TaskStage.PLANNING, TaskStage.VALIDATION)

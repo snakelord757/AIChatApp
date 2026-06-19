@@ -3,6 +3,8 @@ package task
 import chat.ChatHistoryRepository
 import agent.AgentSettings
 import chat.ContextStrategy
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
@@ -96,6 +98,78 @@ class TaskOrchestratorTest {
     }
 
     @Test
+    fun `orchestrator context includes invariants before markdown memory`() {
+        val directory = Files.createTempDirectory("aichat-stage-invariants-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Do not use shell strings.\n", StandardCharsets.UTF_8)
+            val store = MemoryStore(directory.resolve("memory"))
+            val memory = MemoryRepository(store, history::activeBranchIdOrMain)
+            memory.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent Memory\n\nAlways prefer tests.\n", StandardCharsets.UTF_8)
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = memory,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = memory
+                )
+            )
+
+            orchestrator.runTask("build feature")
+
+            val context = factory.inputs.first().workingContext
+            val invariantIndex = context.indexOf("Assistant invariants:")
+            val memoryIndex = context.indexOf("Permanent memory instructions:")
+            assertTrue(invariantIndex >= 0)
+            assertTrue(memoryIndex > invariantIndex)
+            assertContains(context, "Do not use shell strings.")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `only prompt validation and validation stages receive invariants`() {
+        val directory = Files.createTempDirectory("aichat-stage-invariants-filter-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Validate constraints.\n", StandardCharsets.UTF_8)
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = null
+                )
+            )
+
+            orchestrator.runTask("build feature")
+
+            val byStage = factory.inputsByStage
+            assertContains(byStage.getValue(TaskStage.PROMPT_VALIDATION).workingContext, "Assistant invariants:")
+            assertContains(byStage.getValue(TaskStage.VALIDATION).workingContext, "Assistant invariants:")
+            assertFalse(byStage.getValue(TaskStage.PLANNING).workingContext.contains("Assistant invariants:"))
+            assertFalse(byStage.getValue(TaskStage.EXECUTION).workingContext.contains("Assistant invariants:"))
+            assertFalse(byStage.getValue(TaskStage.COMPLETION).workingContext.contains("Assistant invariants:"))
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `context strategy is applied by orchestrator context provider only`() {
         val directory = Files.createTempDirectory("aichat-orchestrator-context-test")
         try {
@@ -147,8 +221,9 @@ class TaskOrchestratorTest {
 
             orchestrator.runTask("ship")
 
-            assertEquals("PLANNING output", factory.inputs[1].previousResult?.output)
-            assertEquals("EXECUTION output", factory.inputs[2].previousResult?.output)
+            assertEquals("PROMPT_VALIDATION output", factory.inputs[1].previousResult?.output)
+            assertEquals("PLANNING output", factory.inputs[2].previousResult?.output)
+            assertEquals("EXECUTION output", factory.inputs[3].previousResult?.output)
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -177,6 +252,7 @@ class TaskOrchestratorTest {
             assertFalse(publicMessages.any { it.content.contains("PLANNING output") && it.role == Role.USER })
 
             val audit = Files.readString(auditPath)
+            assertContains(audit, """"stage":"PROMPT_VALIDATION"""")
             assertContains(audit, """"stage":"PLANNING"""")
             assertContains(audit, """"stage":"EXECUTION"""")
             assertContains(audit, """"stage":"VALIDATION"""")
@@ -203,7 +279,8 @@ class TaskOrchestratorTest {
             orchestrator.runTask("ship visible stages")
 
             val events = history.all().filter { it.role == Role.EVENT }
-            assertEquals(4, events.count { it.content.startsWith("Stage ") })
+            assertEquals(5, events.count { it.content.startsWith("Stage ") })
+            assertContains(events.joinToString("\n") { it.content }, "Stage PROMPT_VALIDATION: success")
             assertContains(events.joinToString("\n") { it.content }, "Stage PLANNING: success")
             assertContains(events.joinToString("\n") { it.content }, "EXECUTION output")
             assertFalse(events.joinToString("\n") { it.content }.contains("PLANNING output"))
@@ -211,6 +288,32 @@ class TaskOrchestratorTest {
             val agentContext = history.apiContextMessages()
             assertFalse(agentContext.any { it.role == Role.EVENT })
             assertFalse(agentContext.any { it.content.contains("Stage PLANNING") })
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `invalid prompt validation completes task without running other stages`() {
+        val directory = Files.createTempDirectory("aichat-invalid-prompt-validation-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val store = TaskStateStore(directory.resolve("task-state.json"))
+            val factory = InvalidPromptFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = store,
+                stageAgentFactory = factory
+            )
+
+            val response = orchestrator.runTask("do forbidden thing")
+
+            assertEquals("Cannot do that. Use a compliant alternative.", response.content)
+            assertEquals(listOf(TaskStage.PROMPT_VALIDATION), factory.createdStages)
+            assertEquals(TaskLifecycleStatus.DONE, store.read()?.lifecycleStatus)
+            assertEquals(listOf(TaskStage.PROMPT_VALIDATION), store.read()?.results?.map { it.stage })
+            assertEquals("Cannot do that. Use a compliant alternative.", history.all().last { it.role == Role.ASSISTANT }.content)
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -368,6 +471,7 @@ class TaskOrchestratorTest {
 
     private class RecordingFactory : StageAgentFactory {
         val inputs = mutableListOf<StageInput>()
+        val inputsByStage = linkedMapOf<TaskStage, StageInput>()
 
         override fun create(stage: TaskStage): StageAgent = object : StageAgent {
             override val stage: TaskStage = stage
@@ -375,6 +479,7 @@ class TaskOrchestratorTest {
 
             override fun execute(input: StageInput): StageResult {
                 inputs += input
+                inputsByStage[stage] = input
                 return StageResult(stage, success = true, summary = "$stage summary", output = "$stage output")
             }
         }
@@ -387,11 +492,32 @@ class TaskOrchestratorTest {
 
             override fun execute(input: StageInput): StageResult =
                 when (stage) {
+                    TaskStage.PROMPT_VALIDATION -> StageResult(stage, success = true, summary = "valid", output = "Prompt accepted.")
                     TaskStage.PLANNING -> StageResult(stage, success = true, summary = "plan", output = "plan")
                     TaskStage.EXECUTION -> StageResult(stage, success = true, summary = "execution", output = "execution")
                     TaskStage.VALIDATION -> StageResult(stage, success = false, summary = "invalid", output = "invalid", issues = listOf("failed"))
                     TaskStage.COMPLETION -> StageResult(stage, success = true, summary = "done", output = "done")
                 }
+        }
+    }
+
+    private class InvalidPromptFactory : StageAgentFactory {
+        val createdStages = mutableListOf<TaskStage>()
+
+        override fun create(stage: TaskStage): StageAgent {
+            createdStages.add(stage)
+            return object : StageAgent {
+                override val stage: TaskStage = stage
+                override val history = emptyList<chat.ChatMessage>()
+
+                override fun execute(input: StageInput): StageResult =
+                    StageResult(
+                        stage = stage,
+                        success = false,
+                        summary = "invalid prompt",
+                        output = "Cannot do that. Use a compliant alternative."
+                    )
+            }
         }
     }
 

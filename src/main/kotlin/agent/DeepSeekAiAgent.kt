@@ -4,6 +4,7 @@ import chat.ChatHistoryRepository
 import chat.ChatMessage
 import chat.ContextStrategy
 import chat.Role
+import invariants.InvariantRepository
 import memory.MemoryRepository
 import java.io.IOException
 import java.net.URI
@@ -16,6 +17,7 @@ import java.time.Duration
 class DeepSeekAiAgent(
     private val historyRepository: ChatHistoryRepository,
     initialSettings: AgentSettings,
+    private val invariantRepository: InvariantRepository? = null,
     private val memoryRepository: MemoryRepository? = null,
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(20))
@@ -51,7 +53,7 @@ class DeepSeekAiAgent(
 
         val response = sendRequest(
             buildRequest(
-                historyRepository.apiContextMessages(settings, memoryRepository?.contextMessages().orEmpty()),
+                historyRepository.apiContextMessages(settings, extraSystemContextMessages()),
                 settings
             )
         )
@@ -123,6 +125,9 @@ class DeepSeekAiAgent(
         val content = JsonTools.extractAssistantContent(response.body()) ?: return
         repository.appendPersonalBullets(content)
     }
+
+    private fun extraSystemContextMessages(): List<ChatMessage> =
+        invariantRepository?.contextMessages().orEmpty() + memoryRepository?.contextMessages().orEmpty()
 
     private fun factExtractionMessages(
         existingFacts: Map<String, String>,

@@ -224,6 +224,15 @@ class DefaultStageAgentFactory(
         PromptedStageAgent(stage, systemPrompt(stage), clientFactory())
 
     private fun systemPrompt(stage: TaskStage): String = when (stage) {
+        TaskStage.PROMPT_VALIDATION -> """
+            You are PromptValidationAgent.
+            Your only job is to decide whether the user's prompt is actionable and compliant before other stage agents spend work on it.
+            Check the assistant invariants in working context before producing output.
+            If the prompt conflicts with an invariant, return success false, explain only the conflicting part in output, and propose the nearest compliant alternative.
+            If the prompt is too vague, impossible to act on, or lacks the minimum information needed for a useful staged task, return success false and ask for the missing information in output.
+            If the prompt is valid, return success true with a short neutral output such as "Prompt accepted."
+            Do not solve the user's task, do not create a plan, and do not produce final deliverables.
+        """.trimIndent()
         TaskStage.PLANNING -> """
             You are PlanningAgent.
             Your only job is to create an execution plan for the user's prompt.
@@ -247,6 +256,8 @@ class DefaultStageAgentFactory(
         TaskStage.VALIDATION -> """
             You are ValidationAgent.
             Your job is to validate the ExecutionAgent output against the original user prompt and the PlanningAgent plan.
+            Check the assistant invariants in working context before producing output.
+            If the execution output violates an invariant, return success false and put the violation in issues and requestedChanges.
             Do not use Markdown blockquotes or lines starting with >; that marker is reserved for the CLI input prompt.
             Return ONLY validation metadata, never the solution itself.
             Do NOT produce a new final answer, Do NOT improve the answer, and Do NOT copy or quote the execution output.

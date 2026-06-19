@@ -5,6 +5,7 @@ import java.time.Instant
 import java.util.UUID
 
 enum class TaskStage {
+    PROMPT_VALIDATION,
     PLANNING,
     EXECUTION,
     VALIDATION,
@@ -42,8 +43,8 @@ data class TaskState(
     val id: String = UUID.randomUUID().toString(),
     val userTask: String,
     val lifecycleStatus: TaskLifecycleStatus = TaskLifecycleStatus.ACTIVE,
-    val currentStage: TaskStage = TaskStage.PLANNING,
-    val stages: List<StageState> = listOf(StageState(TaskStage.PLANNING)),
+    val currentStage: TaskStage = TaskStage.PROMPT_VALIDATION,
+    val stages: List<StageState> = listOf(StageState(TaskStage.PROMPT_VALIDATION)),
     val results: List<StageResult> = emptyList(),
     val clarifications: List<String> = emptyList(),
     val createdAt: Instant = Instant.now(),

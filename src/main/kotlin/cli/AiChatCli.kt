@@ -9,6 +9,8 @@ import config.LocalPropertiesConfig
 import formatting.ConsoleEncoding
 import formatting.ConsoleScreen
 import chat.AppPaths
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import task.DeepSeekStageChatClient
@@ -94,11 +96,14 @@ object AiChatCli {
                 activeBranchKeyProvider = historyRepository::activeBranchIdOrMain
             )
             memoryRepository.ensureInitialized()
+            val invariantRepository = InvariantRepository(InvariantStore(AppPaths.invariantsPath()))
+            invariantRepository.ensureInitialized()
 
             val agent = when (configResult) {
                 is LocalPropertiesConfig.Result.Success -> DeepSeekAiAgent(
                     historyRepository = historyRepository,
                     initialSettings = configResult.settings,
+                    invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
@@ -107,6 +112,7 @@ object AiChatCli {
                     MockAiAgent(
                         historyRepository = historyRepository,
                         initialSettings = configResult.fallbackSettings,
+                        invariantRepository = invariantRepository,
                         memoryRepository = memoryRepository
                     )
                 }
@@ -126,6 +132,7 @@ object AiChatCli {
                 contextProvider = OrchestratorTaskContextProvider(
                     settingsProvider = { settingsRef.get() },
                     historyRepository = historyRepository,
+                    invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository
                 )
             )
@@ -134,6 +141,7 @@ object AiChatCli {
                 agent = agent,
                 initialSettings = settings,
                 historyRepository = historyRepository,
+                invariantRepository = invariantRepository,
                 memoryRepository = memoryRepository,
                 taskOrchestrator = taskOrchestrator,
                 onSettingsChanged = settingsRef::set,
@@ -185,7 +193,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /facts, /memory, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }
@@ -193,6 +201,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
 private class DemoStageChatClient : StageChatClient {
     override fun send(messages: List<chat.ChatMessage>): StageChatResponse {
         val stage = when {
+            messages.firstOrNull()?.content?.contains("PromptValidationAgent") == true -> TaskStage.PROMPT_VALIDATION
             messages.firstOrNull()?.content?.contains("PlanningAgent") == true -> TaskStage.PLANNING
             messages.firstOrNull()?.content?.contains("ExecutionAgent") == true -> TaskStage.EXECUTION
             messages.firstOrNull()?.content?.contains("ValidationAgent") == true -> TaskStage.VALIDATION
@@ -200,6 +209,7 @@ private class DemoStageChatClient : StageChatClient {
             else -> TaskStage.EXECUTION
         }
         val output = when (stage) {
+            TaskStage.PROMPT_VALIDATION -> "Prompt accepted."
             TaskStage.PLANNING -> "Demo plan: understand the request, execute it, validate the result, then summarize the outcome."
             TaskStage.EXECUTION -> "Demo execution completed. Add a real DEEPSEEK_API_KEY to local.properties for model-backed execution."
             TaskStage.VALIDATION -> "Demo validation passed."

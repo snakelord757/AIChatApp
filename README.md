@@ -47,7 +47,7 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
 
 Use `/pause` to mark the active task as paused. If a model request is already in flight, the CLI records a pause flag and does not start the next task stage after the current request returns. When input ends or the CLI closes while a task is active, the task state is also saved as paused so the next run can show that it was interrupted.
 
@@ -79,13 +79,14 @@ AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=true
 User tasks are executed by a task orchestrator as a strict finite-state machine:
 
 ```text
-PLANNING -> EXECUTION -> VALIDATION -> COMPLETION
+PROMPT_VALIDATION -> PLANNING -> EXECUTION -> VALIDATION -> COMPLETION
 ```
 
 `VALIDATION` can send the task back to `EXECUTION` when it finds problems. `COMPLETION` is final, and code-level transition checks reject skipped stages such as `PLANNING -> VALIDATION`.
 
 Each task stage has its own stage-agent role:
 
+- `PromptValidationAgent`
 - `PlanningAgent`
 - `ExecutionAgent`
 - `ValidationAgent`
@@ -167,6 +168,16 @@ Markdown memory belongs to the orchestrator and the main chat flow. Stage agents
 Markdown memory is separate from sticky facts. Sticky facts are the existing key-value memory stored in `chat-history.json` and controlled by the `facts` context strategy. Markdown memory lives only in `.md` files and is used regardless of the selected context strategy.
 
 Token usage and cost from the internal personal-memory extraction request are intentionally not saved in chat history, not shown by `/summary`, and not included in `totalUsage()`. Only normal assistant, summary, and sticky-facts usage remain part of user-visible accounting.
+
+## Assistant Invariants
+
+Assistant invariants are non-negotiable rules stored separately from dialog, sticky facts, summaries, branches, task state, and Markdown memory:
+
+```text
+<app-dir>/invariants.md
+```
+
+Use `/edit invariants` inside chat to create and open the file in the operating system's default text application. Invariants are included as a dedicated system block after the base system prompt and before Markdown memory for both `sliding` and `facts` context strategies. In orchestrated tasks, only `PromptValidationAgent` and `ValidationAgent` see invariants through the working context prepared by the orchestrator.
 
 ## JVM Distribution
 

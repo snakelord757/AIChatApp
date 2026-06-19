@@ -30,6 +30,8 @@ object AppPaths {
 
     fun memoryDirectory(): Path = applicationDirectory().resolve("memory")
 
+    fun invariantsPath(): Path = applicationDirectory().resolve("invariants.md")
+
     fun taskStatePath(): Path = applicationDirectory().resolve("task-state.json")
 
     fun taskStageAuditPath(): Path = applicationDirectory().resolve("task-stage-audit.jsonl")
