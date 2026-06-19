@@ -43,6 +43,22 @@ class SettingsScreenTest {
         assertEquals(7, result.contextWindowMessages)
     }
 
+    @Test
+    fun `planning swarm setting is shown and can be disabled`() {
+        val result = captureStdout {
+            SettingsScreen(
+                renderer = ConsoleRenderer(),
+                input = ConsoleInput(
+                    BufferedReader(
+                        StringReader("show\nset planningSwarmEnabled false\nback\n")
+                    )
+                )
+            ).open(AgentSettings(apiKey = "", planningSwarmEnabled = true, systemPrompt = "system"))
+        }
+
+        assertEquals(false, result.planningSwarmEnabled)
+    }
+
     private fun captureStdout(block: () -> AgentSettings): AgentSettings {
         val originalOut = System.out
         val stream = ByteArrayOutputStream()

@@ -325,6 +325,12 @@ class ChatApplication(
                         renderer.renderStageResult(result)
                     }
                 }
+
+                override fun onStageEvent(stage: TaskStage, content: String) {
+                    renderBackground {
+                        renderer.renderStageEvent(content)
+                    }
+                }
             }
             val response = if (resume) {
                 orchestrator.resumePausedTask(input.takeIf { it.isNotBlank() }, events)

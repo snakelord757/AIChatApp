@@ -55,6 +55,7 @@ class SettingsScreen(
         println("set contextStrategy <sliding|facts> - change context strategy")
         println("set contextWindow <number> - change sliding/facts context window")
         println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
+        println("set planningSwarmEnabled <true|false> - enable or disable experimental planning swarm")
         println("set systemPrompt <text> - change the system prompt")
         println("set baseUrl <url> - change the base URL")
         println("back - return to chat")
@@ -92,6 +93,13 @@ class SettingsScreen(
             "contextwindow", "context_window", "contextwindowmessages", "context_window_messages" -> {
                 val window = value.toIntOrNull()
                 if (window == null || window < 0) invalid(settings) else settings.copy(contextWindowMessages = window)
+            }
+            "planningswarmenabled", "planning_swarm_enabled", "planningswarm", "swarm" -> {
+                when (value.trim().lowercase()) {
+                    "on", "true", "enabled", "1", "yes" -> settings.copy(planningSwarmEnabled = true)
+                    "off", "false", "disabled", "0", "no" -> settings.copy(planningSwarmEnabled = false)
+                    else -> invalid(settings)
+                }
             }
             "systemprompt", "prompt" -> {
                 if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)

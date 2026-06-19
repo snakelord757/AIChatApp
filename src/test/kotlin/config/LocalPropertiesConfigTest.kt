@@ -34,6 +34,7 @@ class LocalPropertiesConfigTest {
             assertEquals(ContextStrategy.STICKY_FACTS, success.settings.contextStrategy)
             assertEquals(9, success.settings.contextWindowMessages)
             assertEquals(false, success.settings.allowClarifyingQuestions)
+            assertEquals(false, success.settings.planningSwarmEnabled)
         } finally {
             if (hadOriginal) {
                 Files.writeString(path, original, StandardCharsets.UTF_8)
@@ -61,6 +62,33 @@ class LocalPropertiesConfigTest {
             val result = LocalPropertiesConfig.load()
             val success = assertIs<LocalPropertiesConfig.Result.Success>(result)
             assertEquals(true, success.settings.allowClarifyingQuestions)
+        } finally {
+            if (hadOriginal) {
+                Files.writeString(path, original, StandardCharsets.UTF_8)
+            } else {
+                Files.deleteIfExists(path)
+            }
+        }
+    }
+
+    @Test
+    fun `planning swarm setting is loaded from local properties`() {
+        val path = Path.of("local.properties").toAbsolutePath().normalize()
+        val hadOriginal = Files.exists(path)
+        val original = if (hadOriginal) Files.readString(path, StandardCharsets.UTF_8) else null
+        try {
+            Files.writeString(
+                path,
+                """
+                DEEPSEEK_API_KEY=test-key
+                AI_CHAT_PLANNING_SWARM_ENABLED=true
+                """.trimIndent(),
+                StandardCharsets.UTF_8
+            )
+
+            val result = LocalPropertiesConfig.load()
+            val success = assertIs<LocalPropertiesConfig.Result.Success>(result)
+            assertEquals(true, success.settings.planningSwarmEnabled)
         } finally {
             if (hadOriginal) {
                 Files.writeString(path, original, StandardCharsets.UTF_8)

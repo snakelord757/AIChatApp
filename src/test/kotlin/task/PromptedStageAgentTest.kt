@@ -207,6 +207,34 @@ class PromptedStageAgentTest {
     }
 
     @Test
+    fun `planning agent keeps non code tasks in their domain despite code context`() {
+        val client = CapturingStageClient(
+            """{"success":true,"summary":"travel plan","output":"Plan country choice criteria.","issues":[],"requestedChanges":[],"retryReason":null}"""
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.PLANNING)
+
+        agent.execute(
+            StageInput(
+                userTask = "Составь план выбора страны для путешествия",
+                previousResult = null,
+                results = emptyList(),
+                workingContext = """
+                    Assistant invariants:
+                    - Do not write Python or C++ code.
+
+                    Personal memory about the user:
+                    - Wants Kotlin examples.
+                """.trimIndent(),
+                clarifications = emptyList()
+            )
+        )
+
+        val systemPrompt = client.messages.first().content
+        assert(systemPrompt.contains("Do not convert non-code requests into programming tasks"))
+        assert(systemPrompt.contains("keep the plan in that domain unless the user explicitly asks for software implementation"))
+    }
+
+    @Test
     fun `completion agent receives execution output as prior stage output`() {
         val client = CapturingStageClient(
             """{"success":true,"summary":"final","output":"Final answer.","issues":[],"requestedChanges":[],"retryReason":null}"""

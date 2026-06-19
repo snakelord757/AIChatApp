@@ -13,6 +13,7 @@ data class AgentSettings(
     val contextStrategy: ContextStrategy = ContextStrategy.SLIDING_WINDOW,
     val contextWindowMessages: Int = 20,
     val allowClarifyingQuestions: Boolean = false,
+    val planningSwarmEnabled: Boolean = false,
     val systemPrompt: String
 ) {
     companion object {

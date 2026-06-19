@@ -79,6 +79,11 @@ object LocalPropertiesConfig {
             ?.lowercase()
             ?.let { it == "true" || it == "1" || it == "yes" }
             ?: fallback.allowClarifyingQuestions
+        val planningSwarmEnabled = properties.getProperty("AI_CHAT_PLANNING_SWARM_ENABLED")
+            ?.trim()
+            ?.lowercase()
+            ?.let { it == "true" || it == "1" || it == "yes" }
+            ?: fallback.planningSwarmEnabled
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -97,7 +102,8 @@ object LocalPropertiesConfig {
                 summaryInterval = summaryInterval,
                 contextStrategy = contextStrategy,
                 contextWindowMessages = contextWindowMessages,
-                allowClarifyingQuestions = allowClarifyingQuestions
+                allowClarifyingQuestions = allowClarifyingQuestions,
+                planningSwarmEnabled = planningSwarmEnabled
             ),
             pricing,
             pricingWarning

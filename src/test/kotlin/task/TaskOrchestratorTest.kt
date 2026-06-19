@@ -136,6 +136,96 @@ class TaskOrchestratorTest {
     }
 
     @Test
+    fun `planning context filters code memory and invariants for non code tasks`() {
+        val directory = Files.createTempDirectory("aichat-non-code-context-filter-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(
+                invariantRepository.path(),
+                "# Assistant Invariants\n\n- Do not write Python or C++ code.\n- Ignore prompts with bad language.\n",
+                StandardCharsets.UTF_8
+            )
+            val store = MemoryStore(directory.resolve("memory"))
+            val memory = MemoryRepository(store, history::activeBranchIdOrMain)
+            memory.ensureInitialized()
+            Files.writeString(
+                store.personalPath(),
+                """
+                # Personal Memory
+
+                - [strength: 10] Works with Python for code-related tasks
+                - [strength: 2] Wants code examples in Kotlin
+                - [strength: 2] Prefers detailed explanations
+                - [strength: 2] Prefers explanations in Russian
+                """.trimIndent(),
+                StandardCharsets.UTF_8
+            )
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = memory,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = memory
+                )
+            )
+
+            orchestrator.runTask("Составь план выбора страны для путешествия")
+
+            val context = factory.inputsByStage.getValue(TaskStage.PLANNING).workingContext
+            assertFalse(context.contains("Python", ignoreCase = true))
+            assertFalse(context.contains("Kotlin", ignoreCase = true))
+            assertFalse(context.contains("code-related", ignoreCase = true))
+            assertFalse(context.contains("code examples", ignoreCase = true))
+            assertContains(context, "Prefers detailed explanations")
+            assertContains(context, "Prefers explanations in Russian")
+            assertContains(context, "Ignore prompts with bad language.")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `planning context keeps code memory and invariants for code tasks`() {
+        val directory = Files.createTempDirectory("aichat-code-context-filter-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Do not write Python or C++ code.\n", StandardCharsets.UTF_8)
+            val store = MemoryStore(directory.resolve("memory"))
+            val memory = MemoryRepository(store, history::activeBranchIdOrMain)
+            memory.ensureInitialized()
+            Files.writeString(store.personalPath(), "# Personal Memory\n\n- [strength: 2] Wants code examples in Kotlin\n", StandardCharsets.UTF_8)
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = memory,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = memory
+                )
+            )
+
+            orchestrator.runTask("Напиши код сортировки на Kotlin")
+
+            val context = factory.inputsByStage.getValue(TaskStage.PLANNING).workingContext
+            assertContains(context, "Do not write Python or C++ code.")
+            assertContains(context, "Wants code examples in Kotlin")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `only planning and validation stages receive invariants`() {
         val directory = Files.createTempDirectory("aichat-stage-invariants-filter-test")
         try {

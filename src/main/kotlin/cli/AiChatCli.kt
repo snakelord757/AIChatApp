@@ -22,6 +22,7 @@ import task.TaskOrchestrator
 import task.JsonlTaskStageAuditStore
 import task.OrchestratorTaskContextProvider
 import task.TaskStateStore
+import swarm.JsonSwarmSessionStore
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
@@ -119,15 +120,27 @@ object AiChatCli {
             }
             val stageClientFactory = {
                 when (configResult) {
-                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(configResult.settings)
+                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(settingsRef.get())
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
+                }
+            }
+            val swarmStageClientFactory = { role: swarm.SwarmRole ->
+                when (configResult) {
+                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(settingsRef.get().copy(temperature = role.temperature))
+                    is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient(role.displayName)
                 }
             }
             val taskOrchestrator = TaskOrchestrator(
                 historyRepository = historyRepository,
                 memoryRepository = memoryRepository,
                 stateStore = TaskStateStore(AppPaths.taskStatePath()),
-                stageAgentFactory = DefaultStageAgentFactory(stageClientFactory),
+                stageAgentFactory = DefaultStageAgentFactory(
+                    clientFactory = stageClientFactory,
+                    settingsProvider = { settingsRef.get() },
+                    swarmClientFactory = swarmStageClientFactory,
+                    swarmSynthesizerClientFactory = stageClientFactory,
+                    swarmSessionStore = JsonSwarmSessionStore(AppPaths.planningSwarmSessionPath())
+                ),
                 stageAuditStore = JsonlTaskStageAuditStore(AppPaths.taskStageAuditPath()),
                 contextProvider = OrchestratorTaskContextProvider(
                     settingsProvider = { settingsRef.get() },
@@ -198,9 +211,19 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
     )
 }
 
-private class DemoStageChatClient : StageChatClient {
+private class DemoStageChatClient(
+    private val swarmRole: String? = null
+) : StageChatClient {
     override fun send(messages: List<chat.ChatMessage>): StageChatResponse {
+        if (swarmRole != null) {
+            return StageChatResponse(
+                """
+                {"role":"$swarmRole","stance":"approve","summary":"$swarmRole demo response","proposal":"Contribute to a safe executable plan.","concerns":[],"requiredChanges":[],"invariantConcerns":[]}
+                """.trimIndent()
+            )
+        }
         val stage = when {
+            messages.firstOrNull()?.content?.contains("planning swarm orchestrator", ignoreCase = true) == true -> TaskStage.PLANNING
             messages.firstOrNull()?.content?.contains("PlanningAgent") == true -> TaskStage.PLANNING
             messages.firstOrNull()?.content?.contains("ExecutionAgent") == true -> TaskStage.EXECUTION
             messages.firstOrNull()?.content?.contains("ValidationAgent") == true -> TaskStage.VALIDATION

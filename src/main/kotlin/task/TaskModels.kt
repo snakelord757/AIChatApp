@@ -61,5 +61,6 @@ data class StageInput(
     val previousResult: StageResult?,
     val results: List<StageResult>,
     val workingContext: String,
-    val clarifications: List<String>
+    val clarifications: List<String>,
+    val taskId: String? = null
 )

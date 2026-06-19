@@ -65,13 +65,21 @@ class ConsoleRenderer(
                 Role.USER -> renderUser(message.content)
                 Role.ASSISTANT -> renderAssistant(message.content)
                 Role.SYSTEM -> Unit
-                Role.EVENT -> renderEvent(message.content)
+                Role.EVENT -> renderStageEvent(message.content)
             }
         }
     }
 
-    private fun renderEvent(content: String) {
+    fun renderStageEvent(content: String) {
         prepareOutput()
+        if (content.startsWith("Stage PLANNING swarm message:")) {
+            renderSwarmMessage(content)
+            return
+        }
+        if (content.startsWith("Stage PLANNING swarm dialogue:")) {
+            renderSwarmDialogue(content)
+            return
+        }
         val stageEvent = content.toStageEvent()
         if (stageEvent == null) {
             renderSystem(content)
@@ -96,6 +104,34 @@ class ConsoleRenderer(
             println()
             println("Requested changes:")
             stageEvent.requestedChanges.forEach { println("- $it") }
+        }
+        println()
+    }
+
+    private fun renderSwarmMessage(content: String) {
+        val lines = content.lineSequence().toList()
+        println()
+        println(Ansi.style("Stage event: PLANNING swarm message", Ansi.BOLD, Ansi.CYAN))
+        lines.drop(1).forEach { line ->
+            when {
+                line.startsWith("Round ") -> println(Ansi.style(line, Ansi.CYAN))
+                line.startsWith("[") -> println(Ansi.style(line, Ansi.BOLD))
+                else -> println(formatter.format(line))
+            }
+        }
+        println()
+    }
+
+    private fun renderSwarmDialogue(content: String) {
+        val lines = content.lineSequence().toList()
+        println()
+        println(Ansi.style("Stage event: PLANNING swarm dialogue", Ansi.BOLD, Ansi.CYAN))
+        lines.drop(1).forEach { line ->
+            when {
+                line.startsWith("Round ") -> println(Ansi.style(line, Ansi.CYAN))
+                line.startsWith("[") -> println(Ansi.style(line, Ansi.BOLD))
+                else -> println(formatter.format(line))
+            }
         }
         println()
     }
@@ -125,6 +161,7 @@ class ConsoleRenderer(
         println("Context strategy: ${settings.contextStrategy.displayName}")
         println("Context window messages: ${settings.contextWindowMessages}")
         println("Summary interval: ${if (settings.summaryInterval > 0) settings.summaryInterval else "disabled"}")
+        println("Planning swarm: ${if (settings.planningSwarmEnabled) "enabled" else "disabled"}")
         println("Base URL: ${settings.baseUrl}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }

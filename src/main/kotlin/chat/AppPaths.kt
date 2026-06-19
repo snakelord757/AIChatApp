@@ -36,6 +36,8 @@ object AppPaths {
 
     fun taskStageAuditPath(): Path = applicationDirectory().resolve("task-stage-audit.jsonl")
 
+    fun planningSwarmSessionPath(): Path = applicationDirectory().resolve("planning-swarm-session.json")
+
     private fun isWindows(): Boolean =
         System.getProperty("os.name").contains("windows", ignoreCase = true)
 }

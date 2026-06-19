@@ -2,6 +2,7 @@ package task
 
 import agent.AgentException
 import chat.ChatHistoryRepository
+import chat.Role
 import chat.TokenUsage
 import memory.MemoryRepository
 import memory.TaskStatus
@@ -73,6 +74,7 @@ class TaskOrchestrator(
         try {
             executeLoop(initial, events)
         } catch (exception: TaskPausedException) {
+            Thread.interrupted()
             val paused = pause(exception.message ?: "Task paused by user.")
             paused.state?.let(events::onPaused)
             paused
@@ -90,13 +92,26 @@ class TaskOrchestrator(
         var state = initial
         while (state.lifecycleStatus == TaskLifecycleStatus.ACTIVE) {
             throwIfPauseRequested(state.currentStage)
-            val agent = stageAgentFactory.create(state.currentStage)
+            val emittedStageEvents = linkedSetOf<String>()
+            val liveStageEventSink = swarm.SwarmEventSink { content ->
+                if (emittedStageEvents.add(content)) {
+                    events.onStageEvent(state.currentStage, content)
+                    historyRepository.addEvent(content)
+                }
+            }
+            val agent = stageAgentFactory.create(state.currentStage, liveStageEventSink)
             val attempt = state.results.count { it.stage == state.currentStage } + 1
             val beforeHistory = agent.history
             val input = stageInput(state)
 
             events.onStageStarted(state.currentStage)
-            val result = executeStage(agent, input, state.currentStage)
+            val result = try {
+                executeStage(agent, input, state.currentStage)
+            } catch (exception: RuntimeException) {
+                emitStageEvents(agent.history.drop(beforeHistory.size), state.currentStage, events, emittedStageEvents)
+                throw exception
+            }
+            emitStageEvents(agent.history.drop(beforeHistory.size), state.currentStage, events, emittedStageEvents)
             stageAuditStore.append(
                 stageAuditEntry(
                     taskId = state.id,
@@ -169,6 +184,20 @@ class TaskOrchestrator(
             throw exception
         }
 
+    private fun emitStageEvents(
+        messages: List<chat.ChatMessage>,
+        stage: TaskStage,
+        events: TaskOrchestratorEvents,
+        emitted: MutableSet<String> = linkedSetOf()
+    ) {
+        messages.filter { it.role == Role.EVENT }.forEach { event ->
+            if (emitted.add(event.content)) {
+                events.onStageEvent(stage, event.content)
+                historyRepository.addEvent(event.content)
+            }
+        }
+    }
+
     private fun throwIfPauseRequested(currentStage: TaskStage) {
         if (pauseRequested || Thread.currentThread().isInterrupted) {
             throw TaskPausedException("Pause requested before $currentStage.")
@@ -234,6 +263,7 @@ class TaskOrchestrator(
 
     private fun stageInput(state: TaskState): StageInput =
         StageInput(
+            taskId = state.id,
             userTask = state.userTask,
             previousResult = state.results.lastOrNull(),
             results = state.results,
@@ -314,6 +344,7 @@ data class OrchestratorResponse(
 interface TaskOrchestratorEvents {
     fun onStageStarted(stage: TaskStage) {}
     fun onStageCompleted(result: StageResult) {}
+    fun onStageEvent(stage: TaskStage, content: String) {}
     fun onPaused(state: TaskState) {}
 
     object None : TaskOrchestratorEvents

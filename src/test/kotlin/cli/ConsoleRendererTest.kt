@@ -111,6 +111,68 @@ class ConsoleRendererTest {
     }
 
     @Test
+    fun `history renderer shows planning swarm dialogue as stage event`() {
+        val output = captureStdout {
+            ConsoleRenderer().renderHistory(
+                listOf(
+                    ChatMessage(
+                        Role.EVENT,
+                        """
+                        Stage PLANNING swarm dialogue:
+                        Round 1
+                        [Strategist] Strategy proposed.
+                        Use a staged plan.
+                        [Risk Manager] No blockers.
+                        """.trimIndent()
+                    )
+                )
+            )
+        }
+
+        assertContains(output, "Stage event: PLANNING swarm dialogue")
+        assertContains(output, "Round 1")
+        assertContains(output, "[Strategist] Strategy proposed.")
+        assertContains(output, "[Risk Manager] No blockers.")
+        assertFalse(output.contains("System: Stage PLANNING swarm dialogue"))
+    }
+
+    @Test
+    fun `live renderer shows planning swarm dialogue as stage event`() {
+        val output = captureStdout {
+            ConsoleRenderer().renderStageEvent(
+                """
+                Stage PLANNING swarm dialogue:
+                Round 1
+                [Strategist] Strategy proposed.
+                """.trimIndent()
+            )
+        }
+
+        assertContains(output, "Stage event: PLANNING swarm dialogue")
+        assertFalse(output.contains("System: Stage PLANNING swarm dialogue"))
+    }
+
+    @Test
+    fun `live renderer shows planning swarm agent message as stage event`() {
+        val output = captureStdout {
+            ConsoleRenderer().renderStageEvent(
+                """
+                Stage PLANNING swarm message:
+                Round 1
+                [Strategist] Strategy proposed.
+                Use a staged plan.
+                """.trimIndent()
+            )
+        }
+
+        assertContains(output, "Stage event: PLANNING swarm message")
+        assertContains(output, "Round 1")
+        assertContains(output, "[Strategist] Strategy proposed.")
+        assertContains(output, "Use a staged plan.")
+        assertFalse(output.contains("System: Stage PLANNING swarm message"))
+    }
+
+    @Test
     fun `prompt is cleared before normal output`() {
         val output = captureStdout {
             val renderer = ConsoleRenderer()
