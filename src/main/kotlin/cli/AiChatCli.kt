@@ -9,6 +9,8 @@ import config.LocalPropertiesConfig
 import formatting.ConsoleEncoding
 import formatting.ConsoleScreen
 import chat.AppPaths
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import task.DeepSeekStageChatClient
@@ -94,11 +96,14 @@ object AiChatCli {
                 activeBranchKeyProvider = historyRepository::activeBranchIdOrMain
             )
             memoryRepository.ensureInitialized()
+            val invariantRepository = InvariantRepository(InvariantStore(AppPaths.invariantsPath()))
+            invariantRepository.ensureInitialized()
 
             val agent = when (configResult) {
                 is LocalPropertiesConfig.Result.Success -> DeepSeekAiAgent(
                     historyRepository = historyRepository,
                     initialSettings = configResult.settings,
+                    invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
@@ -107,6 +112,7 @@ object AiChatCli {
                     MockAiAgent(
                         historyRepository = historyRepository,
                         initialSettings = configResult.fallbackSettings,
+                        invariantRepository = invariantRepository,
                         memoryRepository = memoryRepository
                     )
                 }
@@ -126,6 +132,7 @@ object AiChatCli {
                 contextProvider = OrchestratorTaskContextProvider(
                     settingsProvider = { settingsRef.get() },
                     historyRepository = historyRepository,
+                    invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository
                 )
             )
@@ -134,6 +141,7 @@ object AiChatCli {
                 agent = agent,
                 initialSettings = settings,
                 historyRepository = historyRepository,
+                invariantRepository = invariantRepository,
                 memoryRepository = memoryRepository,
                 taskOrchestrator = taskOrchestrator,
                 onSettingsChanged = settingsRef::set,
@@ -185,7 +193,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /facts, /memory, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }

@@ -32,6 +32,7 @@ class ConsoleRenderer(
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
         println("${Ansi.style("/memory", Ansi.CYAN)} - show Markdown memory commands")
+        println("${Ansi.style("/edit invariants", Ansi.CYAN)} - open assistant invariants")
         println("${Ansi.style("/pause", Ansi.CYAN)} - pause the active task")
         println("${Ansi.style("/resume", Ansi.CYAN)} - resume a paused task")
         println("${Ansi.style("/checkpoint", Ansi.CYAN)} - save a branching checkpoint")
