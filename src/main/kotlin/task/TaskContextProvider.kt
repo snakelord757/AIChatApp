@@ -2,6 +2,7 @@ package task
 
 import agent.AgentSettings
 import chat.ChatHistoryRepository
+import invariants.InvariantRepository
 import memory.MemoryRepository
 
 interface TaskContextProvider {
@@ -15,15 +16,24 @@ interface TaskContextProvider {
 class OrchestratorTaskContextProvider(
     private val settingsProvider: () -> AgentSettings,
     private val historyRepository: ChatHistoryRepository,
+    private val invariantRepository: InvariantRepository? = null,
     private val memoryRepository: MemoryRepository?
 ) : TaskContextProvider {
     override fun contextFor(state: TaskState): String {
         val settings = settingsProvider()
-        val memoryMessages = memoryRepository?.contextMessages().orEmpty()
-        val chatContext = historyRepository.apiContextMessages(settings, memoryMessages)
+        val extraSystemMessages = invariantsFor(state.currentStage) +
+            memoryRepository?.contextMessages().orEmpty()
+        val chatContext = historyRepository.apiContextMessages(settings, extraSystemMessages)
             .joinToString(separator = "\n\n") { message ->
                 "[${message.role.apiName}]\n${message.content}"
             }
         return chatContext
     }
+
+    private fun invariantsFor(stage: TaskStage): List<chat.ChatMessage> =
+        if (stage == TaskStage.PLANNING || stage == TaskStage.VALIDATION) {
+            invariantRepository?.contextMessages().orEmpty()
+        } else {
+            emptyList()
+        }
 }

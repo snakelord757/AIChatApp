@@ -3,6 +3,8 @@ package task
 import chat.ChatHistoryRepository
 import agent.AgentSettings
 import chat.ContextStrategy
+import invariants.InvariantRepository
+import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
@@ -96,6 +98,77 @@ class TaskOrchestratorTest {
     }
 
     @Test
+    fun `orchestrator context includes invariants before markdown memory`() {
+        val directory = Files.createTempDirectory("aichat-stage-invariants-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Do not use shell strings.\n", StandardCharsets.UTF_8)
+            val store = MemoryStore(directory.resolve("memory"))
+            val memory = MemoryRepository(store, history::activeBranchIdOrMain)
+            memory.ensureInitialized()
+            Files.writeString(store.permanentPath(), "# Permanent Memory\n\nAlways prefer tests.\n", StandardCharsets.UTF_8)
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = memory,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = memory
+                )
+            )
+
+            orchestrator.runTask("build feature")
+
+            val context = factory.inputs.first().workingContext
+            val invariantIndex = context.indexOf("Assistant invariants:")
+            val memoryIndex = context.indexOf("Permanent memory instructions:")
+            assertTrue(invariantIndex >= 0)
+            assertTrue(memoryIndex > invariantIndex)
+            assertContains(context, "Do not use shell strings.")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `only planning and validation stages receive invariants`() {
+        val directory = Files.createTempDirectory("aichat-stage-invariants-filter-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
+            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Validate constraints.\n", StandardCharsets.UTF_8)
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    invariantRepository = invariantRepository,
+                    memoryRepository = null
+                )
+            )
+
+            orchestrator.runTask("build feature")
+
+            val byStage = factory.inputsByStage
+            assertContains(byStage.getValue(TaskStage.PLANNING).workingContext, "Assistant invariants:")
+            assertContains(byStage.getValue(TaskStage.VALIDATION).workingContext, "Assistant invariants:")
+            assertFalse(byStage.getValue(TaskStage.EXECUTION).workingContext.contains("Assistant invariants:"))
+            assertFalse(byStage.getValue(TaskStage.COMPLETION).workingContext.contains("Assistant invariants:"))
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `context strategy is applied by orchestrator context provider only`() {
         val directory = Files.createTempDirectory("aichat-orchestrator-context-test")
         try {
@@ -127,6 +200,44 @@ class TaskOrchestratorTest {
 
             assertContains(factory.inputs.first().workingContext, "Sticky facts:")
             assertContains(factory.inputs.first().workingContext, "project: context orchestration")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `orchestrator context includes first chat message inside context window`() {
+        val directory = Files.createTempDirectory("aichat-orchestrator-first-message-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            history.addUser("first chat message with project requirement")
+            history.addAssistant("first assistant answer")
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = {
+                        AgentSettings(
+                            apiKey = "",
+                            systemPrompt = "system",
+                            contextStrategy = ContextStrategy.SLIDING_WINDOW,
+                            contextWindowMessages = 10
+                        )
+                    },
+                    historyRepository = history,
+                    memoryRepository = null
+                )
+            )
+
+            orchestrator.runTask("new task")
+
+            val context = factory.inputsByStage.getValue(TaskStage.PLANNING).workingContext
+            assertContains(context, "first chat message with project requirement")
+            assertContains(context, "first assistant answer")
+            assertContains(context, "new task")
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -211,6 +322,32 @@ class TaskOrchestratorTest {
             val agentContext = history.apiContextMessages()
             assertFalse(agentContext.any { it.role == Role.EVENT })
             assertFalse(agentContext.any { it.content.contains("Stage PLANNING") })
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `invalid planning due to invariants completes task without running other stages`() {
+        val directory = Files.createTempDirectory("aichat-invalid-planning-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val store = TaskStateStore(directory.resolve("task-state.json"))
+            val factory = InvalidPromptFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = store,
+                stageAgentFactory = factory
+            )
+
+            val response = orchestrator.runTask("do forbidden thing")
+
+            assertEquals("Cannot do that. Use a compliant alternative.", response.content)
+            assertEquals(listOf(TaskStage.PLANNING), factory.createdStages)
+            assertEquals(TaskLifecycleStatus.DONE, store.read()?.lifecycleStatus)
+            assertEquals(listOf(TaskStage.PLANNING), store.read()?.results?.map { it.stage })
+            assertEquals("Cannot do that. Use a compliant alternative.", history.all().last { it.role == Role.ASSISTANT }.content)
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -368,6 +505,7 @@ class TaskOrchestratorTest {
 
     private class RecordingFactory : StageAgentFactory {
         val inputs = mutableListOf<StageInput>()
+        val inputsByStage = linkedMapOf<TaskStage, StageInput>()
 
         override fun create(stage: TaskStage): StageAgent = object : StageAgent {
             override val stage: TaskStage = stage
@@ -375,6 +513,7 @@ class TaskOrchestratorTest {
 
             override fun execute(input: StageInput): StageResult {
                 inputs += input
+                inputsByStage[stage] = input
                 return StageResult(stage, success = true, summary = "$stage summary", output = "$stage output")
             }
         }
@@ -392,6 +531,26 @@ class TaskOrchestratorTest {
                     TaskStage.VALIDATION -> StageResult(stage, success = false, summary = "invalid", output = "invalid", issues = listOf("failed"))
                     TaskStage.COMPLETION -> StageResult(stage, success = true, summary = "done", output = "done")
                 }
+        }
+    }
+
+    private class InvalidPromptFactory : StageAgentFactory {
+        val createdStages = mutableListOf<TaskStage>()
+
+        override fun create(stage: TaskStage): StageAgent {
+            createdStages.add(stage)
+            return object : StageAgent {
+                override val stage: TaskStage = stage
+                override val history = emptyList<chat.ChatMessage>()
+
+                override fun execute(input: StageInput): StageResult =
+                    StageResult(
+                        stage = stage,
+                        success = false,
+                        summary = "invalid prompt",
+                        output = "Cannot do that. Use a compliant alternative."
+                    )
+            }
         }
     }
 

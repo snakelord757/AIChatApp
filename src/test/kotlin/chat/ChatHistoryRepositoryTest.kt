@@ -314,6 +314,21 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
+    fun `extra system messages are not persisted in public chat history`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("hello")
+
+        val context = repository.apiContextMessages(
+            AgentSettings(apiKey = "", systemPrompt = "system"),
+            memoryMessages = listOf(ChatMessage(Role.SYSTEM, "Assistant invariants:\n- Rule."))
+        )
+
+        assertContains(context.joinToString("\n") { it.content }, "Assistant invariants:")
+        assertFalse(repository.all().any { it.content.contains("Assistant invariants:") })
+        assertFalse(repository.state().messages.any { it.content.contains("Assistant invariants:") })
+    }
+
+    @Test
     fun `active branch id exposes main fallback and branch id`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
 

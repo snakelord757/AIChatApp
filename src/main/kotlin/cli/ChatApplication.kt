@@ -10,6 +10,7 @@ import chat.ChatHistoryRepository
 import chat.ContextStrategy
 import config.TokenPricing
 import formatting.ConsoleScreen
+import invariants.InvariantRepository
 import memory.MemoryRepository
 import memory.TaskStatus
 import task.TaskLifecycleStatus
@@ -22,6 +23,8 @@ class ChatApplication(
     private val agent: AiAgent,
     initialSettings: AgentSettings,
     private val historyRepository: ChatHistoryRepository,
+    private val invariantRepository: InvariantRepository? = null,
+    private val fileOpener: FileOpener = SystemFileOpener(),
     private val memoryRepository: MemoryRepository? = null,
     private val taskOrchestrator: TaskOrchestrator? = null,
     private val onSettingsChanged: (AgentSettings) -> Unit = {},
@@ -71,6 +74,7 @@ class ChatApplication(
                     userInput == "/facts" -> render { renderer.renderFacts(historyRepository.facts()) }
                     userInput == "/pause" -> handlePauseCommand()
                     userInput.commandName() == "/resume" -> handleResumeCommand(userInput)
+                    userInput.commandName() == "/edit" -> handleEditCommand(userInput)
                     userInput.commandName() == "/memory" -> handleMemoryCommand(userInput)
                     userInput == "/checkpoint" -> {
                         historyRepository.checkpoint()
@@ -125,6 +129,37 @@ class ChatApplication(
     private fun handleResumeCommand(command: String) {
         val clarification = command.substringAfter(' ', missingDelimiterValue = "").ifBlank { null }
         startOrResumeTask(userInput = clarification.orEmpty(), resume = true, renderUserMessage = false)
+    }
+
+    private fun handleEditCommand(command: String) {
+        val parts = command.split(Regex("\\s+"))
+        if (parts.size != 2 || !parts[1].equals("invariants", ignoreCase = true)) {
+            render { renderer.renderError("Usage: /edit invariants") }
+            return
+        }
+        val repository = invariantRepository
+        if (repository == null) {
+            render { renderer.renderError("Assistant invariants are unavailable in this session.") }
+            return
+        }
+        repository.ensureInitialized()
+        val path = repository.path().toAbsolutePath().normalize()
+        try {
+            fileOpener.open(path)
+            render { renderer.renderSystem("Invariants file: $path") }
+        } catch (exception: RuntimeException) {
+            render {
+                renderer.renderError(
+                    "Could not open invariants file: ${exception.message ?: exception::class.simpleName}. Path: $path"
+                )
+            }
+        } catch (exception: java.io.IOException) {
+            render {
+                renderer.renderError(
+                    "Could not open invariants file: ${exception.message ?: exception::class.simpleName}. Path: $path"
+                )
+            }
+        }
     }
 
     private fun handleBranchCommand(command: String) {
