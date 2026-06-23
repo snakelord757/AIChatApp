@@ -12,6 +12,12 @@ import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
+import mcp.McpClient
+import mcp.McpConnectionState
+import mcp.McpServerConfig
+import mcp.McpServerStatus
+import mcp.McpServerStore
+import mcp.McpTool
 import task.StageAgent
 import task.StageAgentFactory
 import task.StageInput
@@ -425,6 +431,75 @@ class ChatApplicationCommandTest {
     }
 
     @Test
+    fun `help includes mcp command`() {
+        val output = captureStdout {
+            ChatApplication(
+                agent = RecordingAgent(),
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("/help\n/exit\n")))
+            ).run()
+        }
+
+        assertContains(output, "/mcp")
+    }
+
+    @Test
+    fun `mcp opens context and commands are not sent to agent`() {
+        val directory = Files.createTempDirectory("aichat-mcp-command-test")
+        val agent = RecordingAgent()
+        val client = FakeMcpClient()
+
+        val output = captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                mcpScreenFactory = { renderer, input ->
+                    McpScreen(renderer, McpServerStore(directory.resolve("mcp-servers.json")), client, input)
+                },
+                input = ConsoleInput(
+                    BufferedReader(StringReader("/mcp\nconnect local node server.js\ntools local\nback\n/exit\n"))
+                )
+            ).run()
+        }
+
+        assertEquals(emptyList(), agent.messages)
+        assertContains(output, "mcp> ")
+        assertContains(output, "local: connected")
+        assertContains(output, "Returned to chat.")
+    }
+
+    @Test
+    fun `mcp context exits with back and returns to chat`() {
+        val directory = Files.createTempDirectory("aichat-mcp-back-test")
+        val agent = RecordingAgent()
+
+        captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                mcpScreenFactory = { renderer, input ->
+                    McpScreen(renderer, McpServerStore(directory.resolve("mcp-servers.json")), FakeMcpClient(), input)
+                },
+                input = ConsoleInput(BufferedReader(StringReader("/mcp\nback\nhello\n/exit\n")))
+            ).run()
+        }
+
+        assertEquals(listOf("hello"), agent.messages)
+    }
+
+    @Test
     fun `pause command marks working memory paused`() {
         val directory = Files.createTempDirectory("aichat-pause-command-test")
         try {
@@ -627,6 +702,40 @@ class ChatApplicationCommandTest {
         override fun open(path: Path) {
             opened.add(path.toAbsolutePath().normalize())
         }
+    }
+
+    private class FakeMcpClient : McpClient {
+        private val configs = linkedMapOf<String, McpServerConfig>()
+        private val statuses = linkedMapOf<String, McpServerStatus>()
+
+        override fun configure(configs: List<McpServerConfig>) {
+            configs.forEach {
+                this.configs[it.name] = it
+                statuses.putIfAbsent(it.name, McpServerStatus(it.name, McpConnectionState.CONFIGURED))
+            }
+        }
+
+        override fun connect(config: McpServerConfig): McpServerStatus {
+            configs[config.name] = config
+            return McpServerStatus(config.name, McpConnectionState.CONNECTED).also { statuses[config.name] = it }
+        }
+
+        override fun disconnect(serverName: String) {
+            configs.remove(serverName)
+            statuses.remove(serverName)
+        }
+
+        override fun clear() {
+            configs.clear()
+            statuses.clear()
+        }
+
+        override fun listServers(): List<McpServerStatus> =
+            configs.keys.sorted().map { statuses[it] ?: McpServerStatus(it, McpConnectionState.CONFIGURED) }
+
+        override fun listTools(serverName: String): List<McpTool> = listOf(McpTool(serverName, "demo_tool"))
+
+        override fun close() = Unit
     }
 
     private class WaitingPauseReader(

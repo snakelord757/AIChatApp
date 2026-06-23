@@ -13,6 +13,10 @@ import formatting.ConsoleScreen
 import invariants.InvariantRepository
 import memory.MemoryRepository
 import memory.TaskStatus
+import mcp.McpClient
+import mcp.McpServerStore
+import mcp.ProcessMcpClient
+import chat.AppPaths
 import task.TaskLifecycleStatus
 import task.TaskOrchestrator
 import task.TaskOrchestratorEvents
@@ -32,10 +36,14 @@ class ChatApplication(
     private val pricing: TokenPricing?,
     private val startupWarning: String? = null,
     private val showStartupWarning: Boolean = true,
+    private val mcpScreenFactory: (ConsoleRenderer, ConsoleInput) -> McpScreen = { screenRenderer, screenInput ->
+        McpScreen(screenRenderer, McpServerStore(AppPaths.mcpServersPath()), ProcessMcpClient(), screenInput)
+    },
     private val input: ConsoleInput = ConsoleInput()
 ) {
     private var settings = initialSettings
     private val settingsScreen = SettingsScreen(renderer, input)
+    private val mcpScreen = mcpScreenFactory(renderer, input)
     private val renderLock = Any()
 
     @Volatile
@@ -88,6 +96,10 @@ class ChatApplication(
                         historyRepository.updateSystemPrompt(settings.systemPrompt)
                         render { renderer.renderSystem("Returned to chat. History is saved.") }
                         renderStickyFactsIfNeeded()
+                    }
+                    userInput == "/mcp" -> {
+                        mcpScreen.open()
+                        render { renderer.renderSystem("Returned to chat. History is saved.") }
                     }
                     userInput == "/clear" -> {
                         historyRepository.clear(settings.systemPrompt)

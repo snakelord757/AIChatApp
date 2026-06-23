@@ -47,11 +47,45 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/mcp`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
 
 Use `/pause` to mark the active task as paused. If a model request is already in flight, the CLI records a pause flag and does not start the next task stage after the current request returns. When input ends or the CLI closes while a task is active, the task state is also saved as paused so the next run can show that it was interrupted.
 
 Use `/resume` to continue a paused task. `/resume <extra context>` stores the extra text as task clarification instead of starting a new task. A plain chat message such as `continue task` or `продолжи задачу` also resumes the paused task when one exists.
+
+## MCP Servers
+
+Use `/mcp` to enter the MCP server screen. The prompt changes to `mcp> ` until you enter `back` or `exit`.
+
+Node.js is required for MCP servers that are launched through `npx`/`npx.cmd`, such as npm-distributed servers. Install Node.js LTS and make sure `node`, `npm`, and `npx` are available in the terminal before starting AIChatApp:
+
+```powershell
+node -v
+npm -v
+npx -v
+```
+
+On Windows, use `npx.cmd` in MCP connect commands:
+
+```text
+connect memory npx.cmd -y @modelcontextprotocol/server-memory
+```
+
+Supported MCP commands:
+
+```text
+help
+list
+connect <name> <command> [args...]
+remove <serverName>
+clear
+tools <serverName>
+tools all
+back
+exit
+```
+
+AIChatApp supports stdio MCP servers. Successful `connect` commands are saved under the app directory as `mcp-servers.json`, but processes are started again when tools are requested in a later run.
 
 ## Context Management
 

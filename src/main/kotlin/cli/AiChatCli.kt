@@ -206,7 +206,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /mcp, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }
