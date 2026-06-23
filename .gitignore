@@ -4,3 +4,4 @@ local.properties
 chat-history.json
 *.iml
 .idea/
+AGENTS.md

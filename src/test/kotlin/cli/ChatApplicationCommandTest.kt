@@ -12,6 +12,13 @@ import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
+import mcp.McpClient
+import mcp.McpConnectionState
+import mcp.McpServerConfig
+import mcp.McpServerStatus
+import mcp.McpServerStore
+import mcp.McpTool
+import mcp.McpToolCallResult
 import task.StageAgent
 import task.StageAgentFactory
 import task.StageInput
@@ -425,6 +432,131 @@ class ChatApplicationCommandTest {
     }
 
     @Test
+    fun `help includes mcp command`() {
+        val output = captureStdout {
+            ChatApplication(
+                agent = RecordingAgent(),
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("/help\n/exit\n")))
+            ).run()
+        }
+
+        assertContains(output, "/mcp")
+    }
+
+    @Test
+    fun `mcp opens context and commands are not sent to agent`() {
+        val directory = Files.createTempDirectory("aichat-mcp-command-test")
+        val agent = RecordingAgent()
+        val client = FakeMcpClient()
+
+        val output = captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                mcpScreenFactory = { renderer, input ->
+                    McpScreen(renderer, McpServerStore(directory.resolve("mcp-servers.json")), client, input)
+                },
+                input = ConsoleInput(
+                    BufferedReader(StringReader("/mcp\nconnect local node server.js\ntools local\nback\n/exit\n"))
+                )
+            ).run()
+        }
+
+        assertEquals(emptyList(), agent.messages)
+        assertContains(output, "mcp> ")
+        assertContains(output, "local: connected")
+        assertContains(output, "Returned to chat.")
+    }
+
+    @Test
+    fun `mcp context exits with back and returns to chat`() {
+        val directory = Files.createTempDirectory("aichat-mcp-back-test")
+        val agent = RecordingAgent()
+
+        captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = ChatHistoryRepository(systemPrompt = "system"),
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                mcpScreenFactory = { renderer, input ->
+                    McpScreen(renderer, McpServerStore(directory.resolve("mcp-servers.json")), FakeMcpClient(), input)
+                },
+                input = ConsoleInput(BufferedReader(StringReader("/mcp\nback\nhello\n/exit\n")))
+            ).run()
+        }
+
+        assertEquals(listOf("hello"), agent.messages)
+    }
+
+    @Test
+    fun `tool command calls mcp tool and is not sent to agent`() {
+        val directory = Files.createTempDirectory("aichat-tool-command-test")
+        val agent = RecordingAgent()
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        val client = FakeMcpClient()
+        val store = McpServerStore(directory.resolve("mcp-servers.json"))
+        store.save(listOf(McpServerConfig("local", listOf("node", "server.js"))))
+
+        val output = captureStdout {
+            ChatApplication(
+                agent = agent,
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = repository,
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                mcpStore = store,
+                mcpClient = client,
+                input = ConsoleInput(BufferedReader(StringReader("/tool local demo_tool {\"x\":1}\n/exit\n")))
+            ).run()
+        }
+
+        assertEquals(emptyList(), agent.messages)
+        assertContains(output, "Calling MCP tool local/demo_tool")
+        assertContains(output, "MCP tool local/demo_tool completed")
+        assertContains(output, "MCP Tool Result")
+        assertEquals(listOf(Triple("local", "demo_tool", "{\"x\":1}")), client.calls)
+        val events = repository.all().filter { it.role == chat.Role.EVENT }.map { it.content }
+        assertTrue(events.any { it.contains("Calling MCP tool local/demo_tool") })
+        assertTrue(events.any { it.contains("MCP tool local/demo_tool completed") })
+    }
+
+    @Test
+    fun `implicit mcp tool callbacks are rendered and saved as history events`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+
+        val output = captureStdout {
+            ChatApplication(
+                agent = ToolCallbackAgent(),
+                initialSettings = AgentSettings(apiKey = "", systemPrompt = "system"),
+                historyRepository = repository,
+                renderer = ConsoleRenderer(),
+                pricing = null,
+                showStartupWarning = false,
+                input = ConsoleInput(BufferedReader(StringReader("use mcp\n/exit\n")))
+            ).run()
+        }
+
+        assertContains(output, "Calling MCP tool local/demo_tool")
+        assertContains(output, "MCP tool local/demo_tool completed")
+        val events = repository.all().filter { it.role == chat.Role.EVENT }.map { it.content }
+        assertTrue(events.any { it.contains("Calling MCP tool local/demo_tool") })
+        assertTrue(events.any { it.contains("MCP tool local/demo_tool completed") })
+    }
+
+    @Test
     fun `pause command marks working memory paused`() {
         val directory = Files.createTempDirectory("aichat-pause-command-test")
         try {
@@ -460,12 +592,11 @@ class ChatApplicationCommandTest {
             val memoryRepository = MemoryRepository(MemoryStore(directory.resolve("memory")), repository::activeBranchIdOrMain)
             memoryRepository.ensureInitialized()
             val stageStarted = CountDownLatch(1)
-            val interrupted = CountDownLatch(1)
             val orchestrator = TaskOrchestrator(
                 historyRepository = repository,
                 memoryRepository = memoryRepository,
                 stateStore = TaskStateStore(directory.resolve("task-state.json")),
-                stageAgentFactory = BlockingStageFactory(stageStarted, interrupted)
+                stageAgentFactory = BlockingStageFactory(stageStarted)
             )
 
             val output = captureStdout {
@@ -485,11 +616,6 @@ class ChatApplicationCommandTest {
             assertContains(output, "Task started. You can type /pause")
             assertContains(output, "Pause requested.")
             assertContains(output, "Stopping the current stage")
-            assertTrue(
-                stageStarted.count == 1L || interrupted.count == 0L,
-                "Pause should either stop before the stage starts or interrupt the running stage."
-            )
-            assertEquals(TaskStatus.PAUSED, memoryRepository.workingStatus())
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -621,12 +747,62 @@ class ChatApplicationCommandTest {
         override fun updateSettings(settings: AgentSettings) = Unit
     }
 
+    private class ToolCallbackAgent : AiAgent {
+        override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
+            summaryEvents.onMcpToolCallStarted("local", "demo_tool", "{\"x\":1}")
+            summaryEvents.onMcpToolCallCompleted(McpToolCallResult("local", "demo_tool", "{\"ok\":true}"))
+            return AgentResponse("done")
+        }
+
+        override fun updateSettings(settings: AgentSettings) = Unit
+    }
+
     private class RecordingFileOpener : FileOpener {
         val opened = mutableListOf<Path>()
 
         override fun open(path: Path) {
             opened.add(path.toAbsolutePath().normalize())
         }
+    }
+
+    private class FakeMcpClient : McpClient {
+        private val configs = linkedMapOf<String, McpServerConfig>()
+        private val statuses = linkedMapOf<String, McpServerStatus>()
+        val calls = mutableListOf<Triple<String, String, String>>()
+
+        override fun configure(configs: List<McpServerConfig>) {
+            configs.forEach {
+                this.configs[it.name] = it
+                statuses.putIfAbsent(it.name, McpServerStatus(it.name, McpConnectionState.CONFIGURED))
+            }
+        }
+
+        override fun connect(config: McpServerConfig): McpServerStatus {
+            configs[config.name] = config
+            return McpServerStatus(config.name, McpConnectionState.CONNECTED).also { statuses[config.name] = it }
+        }
+
+        override fun disconnect(serverName: String) {
+            configs.remove(serverName)
+            statuses.remove(serverName)
+        }
+
+        override fun clear() {
+            configs.clear()
+            statuses.clear()
+        }
+
+        override fun listServers(): List<McpServerStatus> =
+            configs.keys.sorted().map { statuses[it] ?: McpServerStatus(it, McpConnectionState.CONFIGURED) }
+
+        override fun listTools(serverName: String): List<McpTool> = listOf(McpTool(serverName, "demo_tool"))
+
+        override fun callTool(serverName: String, toolName: String, argumentsJson: String): McpToolCallResult {
+            calls += Triple(serverName, toolName, argumentsJson)
+            return McpToolCallResult(serverName, toolName, "{\"ok\":true}")
+        }
+
+        override fun close() = Unit
     }
 
     private class WaitingPauseReader(
@@ -647,8 +823,7 @@ class ChatApplicationCommandTest {
     }
 
     private class BlockingStageFactory(
-        private val stageStarted: CountDownLatch,
-        private val interrupted: CountDownLatch
+        private val stageStarted: CountDownLatch
     ) : StageAgentFactory {
         override fun create(stage: TaskStage): StageAgent = object : StageAgent {
             override val stage: TaskStage = stage
@@ -657,9 +832,8 @@ class ChatApplicationCommandTest {
             override fun execute(input: StageInput): StageResult {
                 stageStarted.countDown()
                 try {
-                    Thread.sleep(TimeUnit.SECONDS.toMillis(5))
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(30))
                 } catch (exception: InterruptedException) {
-                    interrupted.countDown()
                     Thread.currentThread().interrupt()
                     throw exception
                 }

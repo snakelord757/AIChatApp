@@ -8,6 +8,10 @@ import config.TokenPricing
 import formatting.Ansi
 import formatting.MarkdownConsoleFormatter
 import memory.MemoryPaths
+import mcp.McpConnectionState
+import mcp.McpServerStatus
+import mcp.McpToolCallResult
+import mcp.McpTool
 import task.StageResult
 import task.TaskState
 import task.TaskStage
@@ -29,6 +33,7 @@ class ConsoleRenderer(
         prepareOutput()
         println("${Ansi.style("/help", Ansi.CYAN)} - show help")
         println("${Ansi.style("/settings", Ansi.CYAN)} - open settings")
+        println("${Ansi.style("/mcp", Ansi.CYAN)} - connect MCP servers and list tools")
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
         println("${Ansi.style("/memory", Ansi.CYAN)} - show Markdown memory commands")
@@ -164,6 +169,52 @@ class ConsoleRenderer(
         println("Planning swarm: ${if (settings.planningSwarmEnabled) "enabled" else "disabled"}")
         println("Base URL: ${settings.baseUrl}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
+    }
+
+    fun renderMcpServers(servers: List<McpServerStatus>) {
+        prepareOutput()
+        println()
+        println(Ansi.style("MCP Servers", Ansi.BOLD, Ansi.CYAN))
+        if (servers.isEmpty()) {
+            println("No MCP servers configured.")
+        } else {
+            servers.forEach { server ->
+                val status = when (server.state) {
+                    McpConnectionState.CONFIGURED -> "configured"
+                    McpConnectionState.CONNECTED -> "connected"
+                    McpConnectionState.FAILED -> "failed"
+                }
+                val message = server.message?.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()
+                println("${server.name}: $status$message")
+            }
+        }
+        println()
+    }
+
+    fun renderMcpTools(tools: List<McpTool>, includeServerName: Boolean) {
+        prepareOutput()
+        println()
+        println(Ansi.style("MCP Tools", Ansi.BOLD, Ansi.CYAN))
+        if (tools.isEmpty()) {
+            println("No MCP tools found.")
+        } else {
+            tools.forEach { tool ->
+                val prefix = if (includeServerName) "${tool.serverName}/" else ""
+                println("- $prefix${tool.name}")
+                tool.description?.takeIf { it.isNotBlank() }?.let { println("  $it") }
+                tool.inputSchema?.takeIf { it.isNotBlank() }?.let { println("  inputSchema: $it") }
+            }
+        }
+        println()
+    }
+
+    fun renderMcpToolResult(result: McpToolCallResult) {
+        prepareOutput()
+        println()
+        println(Ansi.style("MCP Tool Result", Ansi.BOLD, Ansi.CYAN))
+        println("${result.serverName}/${result.toolName}${if (result.isError) " (error)" else ""}")
+        println(result.content)
+        println()
     }
 
     fun renderUsage(usage: TokenUsage) {

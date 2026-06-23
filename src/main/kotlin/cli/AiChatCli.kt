@@ -13,6 +13,9 @@ import invariants.InvariantRepository
 import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
+import mcp.McpServerStore
+import mcp.ProcessMcpClient
+import mcp.StoredMcpToolGateway
 import task.DeepSeekStageChatClient
 import task.DefaultStageAgentFactory
 import task.StageChatClient
@@ -86,6 +89,9 @@ object AiChatCli {
                 is LocalPropertiesConfig.Result.Failure -> configResult.pricingWarning
             }
             val settingsRef = AtomicReference(settings)
+            val mcpStore = McpServerStore(AppPaths.mcpServersPath())
+            val mcpClient = ProcessMcpClient()
+            val mcpToolGateway = StoredMcpToolGateway(mcpStore, mcpClient)
 
             val historyRepository = ChatHistoryRepository(
                 systemPrompt = settings.systemPrompt,
@@ -105,7 +111,8 @@ object AiChatCli {
                     historyRepository = historyRepository,
                     initialSettings = configResult.settings,
                     invariantRepository = invariantRepository,
-                    memoryRepository = memoryRepository
+                    memoryRepository = memoryRepository,
+                    mcpToolGateway = mcpToolGateway
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
                     renderer.renderError(configResult.message)
@@ -124,6 +131,15 @@ object AiChatCli {
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
                 }
             }
+            val stageAwareClientFactory = { stage: TaskStage ->
+                when (configResult) {
+                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(
+                        settings = settingsRef.get(),
+                        mcpToolGateway = if (stage == TaskStage.EXECUTION) mcpToolGateway else null
+                    )
+                    is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
+                }
+            }
             val swarmStageClientFactory = { role: swarm.SwarmRole ->
                 when (configResult) {
                     is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(settingsRef.get().copy(temperature = role.temperature))
@@ -139,7 +155,9 @@ object AiChatCli {
                     settingsProvider = { settingsRef.get() },
                     swarmClientFactory = swarmStageClientFactory,
                     swarmSynthesizerClientFactory = stageClientFactory,
-                    swarmSessionStore = JsonSwarmSessionStore(AppPaths.planningSwarmSessionPath())
+                    swarmSessionStore = JsonSwarmSessionStore(AppPaths.planningSwarmSessionPath()),
+                    mcpToolsProvider = mcpToolGateway::availableTools,
+                    stageClientFactory = stageAwareClientFactory
                 ),
                 stageAuditStore = JsonlTaskStageAuditStore(AppPaths.taskStageAuditPath()),
                 contextProvider = OrchestratorTaskContextProvider(
@@ -161,7 +179,9 @@ object AiChatCli {
                 renderer = renderer,
                 pricing = pricing,
                 startupWarning = pricingWarning,
-                showStartupWarning = restoredMessages.isEmpty()
+                showStartupWarning = restoredMessages.isEmpty(),
+                mcpStore = mcpStore,
+                mcpClient = mcpClient
             ).run()
         } finally {
             historyStore.close()
@@ -206,7 +226,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /mcp, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }

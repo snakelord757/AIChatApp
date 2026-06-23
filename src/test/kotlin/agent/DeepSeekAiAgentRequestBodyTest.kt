@@ -8,6 +8,9 @@ import invariants.InvariantRepository
 import invariants.InvariantStore
 import memory.MemoryRepository
 import memory.MemoryStore
+import mcp.McpTool
+import mcp.McpToolCallResult
+import mcp.McpToolGateway
 import java.net.Authenticator
 import java.net.CookieHandler
 import java.net.ProxySelector
@@ -172,6 +175,36 @@ class DeepSeekAiAgentRequestBodyTest {
             repository.facts()
         )
         assertEquals(chat.TokenUsage(inputTokens = 4, outputTokens = 4), repository.totalUsage())
+    }
+
+    @Test
+    fun `mcp tool call is executed and final answer is requested with tool result`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        val httpClient = RecordingHttpClient(
+            listOf(
+                assistantResponse("""{"mcpToolCall":{"server":"amiibo","tool":"search_amiibo","arguments":{"name":"Mario","limit":1}}}"""),
+                assistantResponse("Mario amiibo result")
+            )
+        )
+        val gateway = RecordingMcpGateway()
+        val agent = DeepSeekAiAgent(
+            historyRepository = repository,
+            initialSettings = AgentSettings(apiKey = "key", summaryInterval = 0, systemPrompt = "system"),
+            mcpToolGateway = gateway,
+            httpClient = httpClient
+        )
+
+        val response = agent.send("Find Mario amiibo")
+
+        assertEquals("Mario amiibo result", response.content)
+        assertEquals("amiibo", gateway.calls.single().first)
+        assertEquals("search_amiibo", gateway.calls.single().second)
+        assertContains(gateway.calls.single().third, "\"name\":\"Mario\"")
+        assertContains(gateway.calls.single().third, "\"limit\":1")
+        assertContains(httpClient.requestBodies.first(), "MCP tools are available")
+        assertContains(httpClient.requestBodies[1], "MCP tool result for amiibo/search_amiibo")
+        assertContains(httpClient.requestBodies[1], "tool-output")
+        assertContains(repository.all().last().content, "Mario amiibo result")
     }
 
     @Test
@@ -564,6 +597,18 @@ class DeepSeekAiAgentRequestBodyTest {
         override fun authenticator(): Optional<Authenticator> = Optional.empty()
         override fun version(): Version = Version.HTTP_1_1
         override fun executor(): Optional<Executor> = Optional.empty()
+    }
+
+    private class RecordingMcpGateway : McpToolGateway {
+        val calls = mutableListOf<Triple<String, String, String>>()
+
+        override fun availableTools(): List<McpTool> =
+            listOf(McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"}}}"))
+
+        override fun callTool(serverName: String, toolName: String, argumentsJson: String): McpToolCallResult {
+            calls += Triple(serverName, toolName, argumentsJson)
+            return McpToolCallResult(serverName, toolName, "tool-output")
+        }
     }
 
     private class BodySubscriber : java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {

@@ -47,11 +47,102 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/mcp`, `/tool <serverName> <toolName> <jsonArguments>`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
 
 Use `/pause` to mark the active task as paused. If a model request is already in flight, the CLI records a pause flag and does not start the next task stage after the current request returns. When input ends or the CLI closes while a task is active, the task state is also saved as paused so the next run can show that it was interrupted.
 
 Use `/resume` to continue a paused task. `/resume <extra context>` stores the extra text as task clarification instead of starting a new task. A plain chat message such as `continue task` or `продолжи задачу` also resumes the paused task when one exists.
+
+## MCP Servers
+
+Use `/mcp` to enter the MCP server screen. The prompt changes to `mcp> ` until you enter `back` or `exit`.
+
+Node.js is required for MCP servers that are launched through `npx`/`npx.cmd`, such as npm-distributed servers. Install Node.js LTS and make sure `node`, `npm`, and `npx` are available in the terminal before starting AIChatApp:
+
+```powershell
+node -v
+npm -v
+npx -v
+```
+
+On Windows, use `npx.cmd` in MCP connect commands:
+
+```text
+connect memory npx.cmd -y @modelcontextprotocol/server-memory
+```
+
+Supported MCP commands:
+
+```text
+help
+list
+connect <name> <command> [args...]
+connect <name> <httpUrl>
+connect <name> <projectDirectory>
+remove <serverName>
+clear
+tools <serverName>
+tools all
+call <serverName> <toolName> <jsonArguments>
+back
+exit
+```
+
+AIChatApp supports stdio MCP servers and Streamable HTTP MCP servers. Successful `connect` commands are saved under the app directory as `mcp-servers.json`. Stdio processes are started again when tools are requested in a later run; HTTP servers are contacted at their saved endpoint.
+
+To connect a remote Streamable HTTP MCP server, pass the MCP endpoint URL:
+
+```text
+connect remote http://5.35.125.50:8080/mcp
+```
+
+Then list or call its tools:
+
+```text
+tools remote
+call remote <toolName> {}
+```
+
+If a local MCP project includes `examples/mcp-client-config.json`, you can connect the project directory directly. AIChatApp reads the first matching `mcpServers` entry and uses its `command`, `args`, `cwd`, and `env` values:
+
+```text
+connect amiibo D:\AmiiboMCP
+```
+
+If no client config exists, AIChatApp falls back to a built jar under `build/libs/*.jar` and starts it with `java -jar`.
+
+You can explicitly call an MCP tool from the MCP screen:
+
+```text
+call amiibo search_amiibo {"name":"Mario","limit":3}
+```
+
+The same explicit tool call is also available directly from chat:
+
+```text
+/tool amiibo search_amiibo {"name":"Mario","limit":3}
+```
+
+In normal chat, the real DeepSeek agent can also use configured MCP tools implicitly. AIChatApp adds the available MCP tools to the system context; when the model needs one, it must respond with:
+
+```json
+{"mcpToolCall":{"server":"amiibo","tool":"search_amiibo","arguments":{"name":"Mario","limit":3}}}
+```
+
+AIChatApp executes that `tools/call` request, sends the result back to the model, and renders the final answer. Demo mode does not perform implicit MCP tool calling.
+
+In orchestrated task mode, MCP tools are stage-scoped:
+
+- `PlanningAgent` sees the available MCP tools and should decide whether a tool is useful. If so, its plan should name the exact `server/tool` and suggested JSON arguments for `ExecutionAgent`.
+- `ExecutionAgent` is the only stage allowed to perform implicit MCP `tools/call` requests.
+- `ValidationAgent` and `CompletionAgent` do not call MCP tools.
+
+Every MCP tool call made from chat prints explicit console status lines and is saved to chat history as event messages:
+
+```text
+System: Calling MCP tool amiibo/search_amiibo with arguments: {"name":"Mario","limit":3}
+System: MCP tool amiibo/search_amiibo completed. Result: ...
+```
 
 ## Context Management
 

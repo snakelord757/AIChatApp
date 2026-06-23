@@ -38,6 +38,8 @@ object AppPaths {
 
     fun planningSwarmSessionPath(): Path = applicationDirectory().resolve("planning-swarm-session.json")
 
+    fun mcpServersPath(): Path = applicationDirectory().resolve("mcp-servers.json")
+
     private fun isWindows(): Boolean =
         System.getProperty("os.name").contains("windows", ignoreCase = true)
 }

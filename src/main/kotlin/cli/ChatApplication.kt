@@ -13,6 +13,12 @@ import formatting.ConsoleScreen
 import invariants.InvariantRepository
 import memory.MemoryRepository
 import memory.TaskStatus
+import mcp.McpClient
+import mcp.McpServerStore
+import mcp.ProcessMcpClient
+import chat.AppPaths
+import mcp.McpToolCallResult
+import mcp.StoredMcpToolGateway
 import task.TaskLifecycleStatus
 import task.TaskOrchestrator
 import task.TaskOrchestratorEvents
@@ -32,10 +38,16 @@ class ChatApplication(
     private val pricing: TokenPricing?,
     private val startupWarning: String? = null,
     private val showStartupWarning: Boolean = true,
+    private val mcpStore: McpServerStore = McpServerStore(AppPaths.mcpServersPath()),
+    private val mcpClient: McpClient = ProcessMcpClient(),
+    private val mcpScreenFactory: (ConsoleRenderer, ConsoleInput) -> McpScreen = { screenRenderer, screenInput ->
+        McpScreen(screenRenderer, mcpStore, mcpClient, screenInput)
+    },
     private val input: ConsoleInput = ConsoleInput()
 ) {
     private var settings = initialSettings
     private val settingsScreen = SettingsScreen(renderer, input)
+    private val mcpScreen = mcpScreenFactory(renderer, input)
     private val renderLock = Any()
 
     @Volatile
@@ -73,6 +85,7 @@ class ChatApplication(
                     userInput == "/summary" -> render { renderer.renderSummary(historyRepository.totalUsage(), pricing) }
                     userInput == "/facts" -> render { renderer.renderFacts(historyRepository.facts()) }
                     userInput == "/pause" -> handlePauseCommand()
+                    userInput.commandName() == "/tool" -> handleToolCommand(userInput)
                     userInput.commandName() == "/resume" -> handleResumeCommand(userInput)
                     userInput.commandName() == "/edit" -> handleEditCommand(userInput)
                     userInput.commandName() == "/memory" -> handleMemoryCommand(userInput)
@@ -88,6 +101,10 @@ class ChatApplication(
                         historyRepository.updateSystemPrompt(settings.systemPrompt)
                         render { renderer.renderSystem("Returned to chat. History is saved.") }
                         renderStickyFactsIfNeeded()
+                    }
+                    userInput == "/mcp" -> {
+                        mcpScreen.open()
+                        render { renderer.renderSystem("Returned to chat. History is saved.") }
                     }
                     userInput == "/clear" -> {
                         historyRepository.clear(settings.systemPrompt)
@@ -129,6 +146,28 @@ class ChatApplication(
     private fun handleResumeCommand(command: String) {
         val clarification = command.substringAfter(' ', missingDelimiterValue = "").ifBlank { null }
         startOrResumeTask(userInput = clarification.orEmpty(), resume = true, renderUserMessage = false)
+    }
+
+    private fun handleToolCommand(command: String) {
+        val parts = command.split(Regex("\\s+"), limit = 4)
+        if (parts.size != 4) {
+            render { renderer.renderError("Usage: /tool <serverName> <toolName> <jsonArguments>") }
+            return
+        }
+        val startedEvent = mcpToolStartedEvent(parts[1], parts[2], parts[3])
+        historyRepository.addEvent(startedEvent)
+        render { renderer.renderSystem(startedEvent) }
+        try {
+            val result = StoredMcpToolGateway(mcpStore, mcpClient).callTool(parts[1], parts[2], parts[3])
+            val completedEvent = mcpToolCompletedEvent(result)
+            historyRepository.addEvent(completedEvent)
+            render { renderer.renderSystem(completedEvent) }
+            render { renderer.renderMcpToolResult(result) }
+        } catch (exception: RuntimeException) {
+            val message = exception.message ?: "Could not call MCP tool."
+            historyRepository.addEvent(mcpToolFailedEvent(parts[1], parts[2], message))
+            render { renderer.renderError(message) }
+        }
     }
 
     private fun handleEditCommand(command: String) {
@@ -285,6 +324,24 @@ class ChatApplication(
                             renderer.renderCost(usage, pricing)
                         }
                     }
+
+                    override fun onMcpToolCallStarted(serverName: String, toolName: String, argumentsJson: String) {
+                        val event = mcpToolStartedEvent(serverName, toolName, argumentsJson)
+                        historyRepository.addEvent(event)
+                        render { renderer.renderSystem(event) }
+                    }
+
+                    override fun onMcpToolCallCompleted(result: McpToolCallResult) {
+                        val event = mcpToolCompletedEvent(result)
+                        historyRepository.addEvent(event)
+                        render { renderer.renderSystem(event) }
+                    }
+
+                    override fun onMcpToolCallFailed(serverName: String, toolName: String, message: String) {
+                        val event = mcpToolFailedEvent(serverName, toolName, message)
+                        historyRepository.addEvent(event)
+                        render { renderer.renderError(event) }
+                    }
                 })
             render { renderer.renderAssistant(response.content) }
             if (response.wasLimited) {
@@ -406,6 +463,15 @@ class ChatApplication(
             renderer.prompt()
         }
     }
+
+    private fun mcpToolStartedEvent(serverName: String, toolName: String, argumentsJson: String): String =
+        "Calling MCP tool $serverName/$toolName with arguments: $argumentsJson"
+
+    private fun mcpToolCompletedEvent(result: McpToolCallResult): String =
+        "MCP tool ${result.serverName}/${result.toolName} completed${if (result.isError) " with error" else ""}. Result: ${result.content.take(500)}"
+
+    private fun mcpToolFailedEvent(serverName: String, toolName: String, message: String): String =
+        "MCP tool $serverName/$toolName failed: $message"
 
     private fun limitWarning(reason: ResponseLimitReason?): String = when (reason) {
         ResponseLimitReason.REQUEST_MAX_TOKENS ->

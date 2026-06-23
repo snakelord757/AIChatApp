@@ -8,6 +8,12 @@ import chat.ChatMessage
 import chat.Role
 import chat.TokenUsage
 import formatting.CliPromptMarkerNormalizer
+import mcp.McpJson
+import mcp.McpTool
+import mcp.McpToolArgumentSanitizer
+import mcp.McpToolGateway
+import mcp.asObject
+import mcp.asString
 import swarm.PlanningSwarmStageAgent
 import swarm.SwarmEventSink
 import swarm.SwarmRole
@@ -37,7 +43,8 @@ interface StageChatClient {
 data class StageChatResponse(
     val content: String,
     val usage: TokenUsage = TokenUsage.ZERO,
-    val finishReason: String? = null
+    val finishReason: String? = null,
+    val events: List<String> = emptyList()
 )
 
 class PromptedStageAgent(
@@ -56,6 +63,7 @@ class PromptedStageAgent(
         }
         messages += ChatMessage(Role.USER, stagePrompt(input))
         val response = client.send(messages)
+        response.events.forEach { messages += ChatMessage(Role.EVENT, it) }
         messages += ChatMessage(Role.ASSISTANT, response.content, response.usage)
         return parseStageResult(response)
     }
@@ -227,6 +235,8 @@ class DefaultStageAgentFactory(
     private val swarmSynthesizerClientFactory: (() -> StageChatClient)? = null,
     private val swarmEventSink: SwarmEventSink = SwarmEventSink.None,
     private val swarmSessionStore: swarm.SwarmSessionStore = swarm.SwarmSessionStore.None,
+    private val mcpToolsProvider: () -> List<McpTool> = { emptyList() },
+    private val stageClientFactory: ((TaskStage) -> StageChatClient)? = null,
     private val clientFactory: () -> StageChatClient
 ) : StageAgentFactory {
     override fun create(stage: TaskStage): StageAgent = create(stage, swarmEventSink)
@@ -240,7 +250,7 @@ class DefaultStageAgentFactory(
                 sessionStore = swarmSessionStore
             )
         } else {
-            PromptedStageAgent(stage, systemPrompt(stage), clientFactory())
+            PromptedStageAgent(stage, systemPrompt(stage), stageClientFactory?.invoke(stage) ?: clientFactory())
         }
 
     private fun systemPrompt(stage: TaskStage): String = when (stage) {
@@ -262,8 +272,13 @@ class DefaultStageAgentFactory(
             Do NOT provide final deliverables, final code, final prose, or the finished solution.
             Do NOT address ExecutionAgent directly and do NOT write command-like prompts such as "ExecutionAgent, do ...".
             If the user asks for code, your plan may mention that ExecutionAgent must produce code, but you must not write that code.
+            If available MCP tools can help answer the user accurately, include the exact server/tool name and suggested JSON arguments for ExecutionAgent in the plan.
+            Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, suggested JSON arguments must be {}.
+            Do not request or call MCP tools yourself in PlanningAgent; only decide whether ExecutionAgent should use them.
+            If no MCP tool is relevant, say that no MCP tool is needed.
             The output field must contain only a concise neutral plan with required deliverables and constraints.
             The summary field must describe the plan, not the final answer.
+            ${planningMcpToolCatalog()}
         """.trimIndent()
         TaskStage.EXECUTION -> """
             You are ExecutionAgent.
@@ -272,6 +287,9 @@ class DefaultStageAgentFactory(
             Treat the PLANNING result as instructions for your work.
             Do not merely repeat the plan.
             If the user requested code, this is the stage that writes the code.
+            If the plan identifies a relevant MCP tool, use it before drafting the answer.
+            If another available MCP tool is clearly needed and relevant, you may use it.
+            When requesting an MCP tool call, use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, pass {}.
             The output field must contain the completed draft deliverable for ValidationAgent.
         """.trimIndent()
         TaskStage.VALIDATION -> """
@@ -300,29 +318,69 @@ class DefaultStageAgentFactory(
             The output field must contain only the final answer to show the user.
         """.trimIndent()
     }
+
+    private fun planningMcpToolCatalog(): String {
+        val tools = runCatching { mcpToolsProvider() }.getOrElse { emptyList() }
+        if (tools.isEmpty()) return "Available MCP tools: none."
+        return buildString {
+            appendLine("Available MCP tools for ExecutionAgent:")
+            tools.forEach { tool ->
+                append("- ${tool.serverName}/${tool.name}")
+                tool.description?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+                tool.inputSchema?.takeIf { it.isNotBlank() }?.let { append(" inputSchema=$it") }
+                appendLine()
+            }
+        }.trimEnd()
+    }
 }
 
 class DeepSeekStageChatClient(
     private var settings: AgentSettings,
+    private val mcpToolGateway: McpToolGateway? = null,
     private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
 ) : StageChatClient {
     override fun send(messages: List<ChatMessage>): StageChatResponse {
-        val response = try {
-            httpClient.send(buildRequest(messages), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-        } catch (exception: IOException) {
-            throw AgentException("Could not connect to DeepSeek. Check the internet connection and base URL.", exception)
-        } catch (exception: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw AgentException("The DeepSeek request was interrupted.", exception)
-        }
-        if (response.statusCode() !in 200..299) {
-            throw AgentException("DeepSeek returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
-        }
-        val content = JsonTools.extractAssistantContent(response.body())
+        val requestMessages = messages + mcpToolContextMessages()
+        val response = sendRequest(requestMessages)
+        val firstContent = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
-        val usage = JsonTools.extractUsage(response.body())
-        ResponseLimitClassifier.classify(JsonTools.extractFinishReason(response.body()), settings, usage)
-        return StageChatResponse(content, usage, JsonTools.extractFinishReason(response.body()))
+        val firstUsage = JsonTools.extractUsage(response.body())
+        val toolCall = parseMcpToolCall(firstContent)
+        if (toolCall == null || mcpToolGateway == null) {
+            ResponseLimitClassifier.classify(JsonTools.extractFinishReason(response.body()), settings, firstUsage)
+            return StageChatResponse(firstContent, firstUsage, JsonTools.extractFinishReason(response.body()))
+        }
+
+        val events = mutableListOf<String>()
+        val argumentsJson = sanitizedMcpArguments(toolCall)
+        events += mcpToolStartedEvent(toolCall.serverName, toolCall.toolName, argumentsJson)
+        val toolResult = try {
+            mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
+        } catch (exception: RuntimeException) {
+            val message = exception.message ?: "Could not call MCP tool."
+            events += mcpToolFailedEvent(toolCall.serverName, toolCall.toolName, message)
+            throw AgentException("MCP tool ${toolCall.serverName}/${toolCall.toolName} failed: $message", exception)
+        }
+        events += mcpToolCompletedEvent(toolResult.serverName, toolResult.toolName, toolResult.content, toolResult.isError)
+        val finalResponse = sendRequest(
+            requestMessages + listOf(
+                ChatMessage(Role.ASSISTANT, firstContent),
+                ChatMessage(
+                    Role.USER,
+                    """
+                    MCP tool result for ${toolResult.serverName}/${toolResult.toolName}:
+                    ${toolResult.content}
+
+                    Continue the current stage using this tool result. Return ONLY the valid JSON required by the stage contract. Do not request another MCP tool call.
+                    """.trimIndent()
+                )
+            )
+        )
+        val content = JsonTools.extractAssistantContent(finalResponse.body())
+            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
+        val usage = firstUsage + JsonTools.extractUsage(finalResponse.body())
+        ResponseLimitClassifier.classify(JsonTools.extractFinishReason(finalResponse.body()), settings, usage)
+        return StageChatResponse(content, usage, JsonTools.extractFinishReason(finalResponse.body()), events)
     }
 
     fun updateSettings(settings: AgentSettings) {
@@ -335,6 +393,21 @@ class DeepSeekStageChatClient(
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages)))
             .build()
+
+    private fun sendRequest(messages: List<ChatMessage>): HttpResponse<String> {
+        val response = try {
+            httpClient.send(buildRequest(messages), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        } catch (exception: IOException) {
+            throw AgentException("Could not connect to DeepSeek. Check the internet connection and base URL.", exception)
+        } catch (exception: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw AgentException("The DeepSeek request was interrupted.", exception)
+        }
+        if (response.statusCode() !in 200..299) {
+            throw AgentException("DeepSeek returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
+        }
+        return response
+    }
 
     private fun endpoint(baseUrl: String): URI = URI.create("${baseUrl.trim().trimEnd('/')}/chat/completions")
 
@@ -351,4 +424,64 @@ class DeepSeekStageChatClient(
         if (settings.maxTokens > 0) fields += """"max_tokens": ${settings.maxTokens}"""
         return fields.joinToString(",\n  ", "{\n  ", "\n}")
     }
+
+    private fun mcpToolContextMessages(): List<ChatMessage> {
+        val gateway = mcpToolGateway ?: return emptyList()
+        val tools = runCatching { gateway.availableTools() }.getOrElse { emptyList() }
+        if (tools.isEmpty()) return emptyList()
+        return listOf(
+            ChatMessage(
+                Role.SYSTEM,
+                """
+                MCP tools are available. Use them when they can help complete the current stage.
+                To request exactly one MCP tool call, respond only with compact JSON in this form:
+                {"mcpToolCall":{"server":"serverName","tool":"toolName","arguments":{}}}
+                Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, arguments must be {}.
+                Available MCP tools:
+                ${tools.joinToString("\n", transform = ::toolDescription)}
+                """.trimIndent()
+            )
+        )
+    }
+
+    private fun toolDescription(tool: McpTool): String =
+        "- ${tool.serverName}/${tool.name}: ${tool.description.orEmpty()} inputSchema=${tool.inputSchema ?: "{}"}"
+
+    private fun sanitizedMcpArguments(toolCall: McpRequestedToolCall): String {
+        val tool = runCatching {
+            mcpToolGateway?.availableTools()?.firstOrNull {
+                it.serverName == toolCall.serverName && it.name == toolCall.toolName
+            }
+        }.getOrNull()
+        return McpToolArgumentSanitizer.sanitize(toolCall.argumentsJson, tool)
+    }
+
+    private fun parseMcpToolCall(content: String): McpRequestedToolCall? {
+        val root = runCatching { McpJson.parse(content.trim().withoutMarkdownFence()).asObject() }.getOrNull() ?: return null
+        val call = root["mcpToolCall"]?.asObject() ?: return null
+        val server = call["server"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
+        val tool = call["tool"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
+        val arguments = call["arguments"] ?: return null
+        return McpRequestedToolCall(server, tool, McpJson.stringify(arguments))
+    }
+
+    private fun mcpToolStartedEvent(serverName: String, toolName: String, argumentsJson: String): String =
+        "Calling MCP tool $serverName/$toolName with arguments: $argumentsJson"
+
+    private fun mcpToolCompletedEvent(serverName: String, toolName: String, content: String, isError: Boolean): String =
+        "MCP tool $serverName/$toolName completed${if (isError) " with error" else ""}. Result: ${content.take(500)}"
+
+    private fun mcpToolFailedEvent(serverName: String, toolName: String, message: String): String =
+        "MCP tool $serverName/$toolName failed: $message"
+
+    private fun String.withoutMarkdownFence(): String {
+        if (!startsWith("```")) return this
+        return lines().drop(1).dropLast(1).joinToString("\n").trim()
+    }
+
+    private data class McpRequestedToolCall(
+        val serverName: String,
+        val toolName: String,
+        val argumentsJson: String
+    )
 }

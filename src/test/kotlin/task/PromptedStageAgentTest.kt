@@ -1,10 +1,59 @@
 package task
 
 import chat.ChatMessage
+import mcp.McpTool
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 class PromptedStageAgentTest {
+    @Test
+    fun `planning prompt lists mcp tools for execution without enabling tool calls`() {
+        val client = CapturingStageClient(
+            """{"success":true,"summary":"planned","output":"Use amiibo/search_amiibo in execution.","issues":[],"requestedChanges":[],"retryReason":null}"""
+        )
+        val agent = DefaultStageAgentFactory(
+            clientFactory = { client },
+            mcpToolsProvider = {
+                listOf(McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\"}"))
+            }
+        ).create(TaskStage.PLANNING)
+
+        agent.execute(
+            StageInput(
+                userTask = "Find Mario",
+                previousResult = null,
+                results = emptyList(),
+                workingContext = "",
+                clarifications = emptyList()
+            )
+        )
+
+        val systemPrompt = client.messages.first().content
+        assertContains(systemPrompt, "Available MCP tools for ExecutionAgent")
+        assertContains(systemPrompt, "amiibo/search_amiibo")
+        assertContains(systemPrompt, "Do not request or call MCP tools yourself in PlanningAgent")
+    }
+
+    @Test
+    fun `stage aware client factory is selected per stage`() {
+        val createdStages = mutableListOf<TaskStage>()
+        val factory = DefaultStageAgentFactory(
+            clientFactory = { CapturingStageClient("{}") },
+            stageClientFactory = { stage ->
+                createdStages += stage
+                CapturingStageClient(
+                    """{"success":true,"summary":"${stage.name}","output":"${stage.name} output","issues":[],"requestedChanges":[],"retryReason":null}"""
+                )
+            }
+        )
+
+        factory.create(TaskStage.PLANNING).execute(emptyInput())
+        factory.create(TaskStage.EXECUTION).execute(emptyInput())
+
+        assertEquals(listOf(TaskStage.PLANNING, TaskStage.EXECUTION), createdStages)
+    }
+
     @Test
     fun `stage agent exposes readable output instead of raw json`() {
         val agent = PromptedStageAgent(
@@ -302,4 +351,13 @@ class PromptedStageAgentTest {
             return StageChatResponse(response)
         }
     }
+
+    private fun emptyInput(): StageInput =
+        StageInput(
+            userTask = "task",
+            previousResult = null,
+            results = emptyList(),
+            workingContext = "",
+            clarifications = emptyList()
+        )
 }
