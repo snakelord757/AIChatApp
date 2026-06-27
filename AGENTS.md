@@ -154,3 +154,12 @@
   - Добавлен ordered MCP tool-call pipeline для стандартного task/chat flow с explicit execution plan, chain identifiers, sequential/parallel mode, dependencies и input mappings.
   - Вызовы MCP tools вынесены на стадию EXECUTION; planning теперь формирует строгий `toolExecutionPlan`, а orchestrator валидирует план, передает outputs между шагами и рендерит события выполнения/ошибки в консоль и audit.
   - Усилена устойчивость к повторным MCP/runtime ошибкам: строгая валидация аргументов tool-call, очистка stale task-state, gateway refresh схем инструментов и корректный Windows AppPaths для Gradle/IDE запусков.
+
+### Fix task state recovery test regressions
+
+- Дата выполнения: 2026-06-27
+- Актуальный хэш: 098855f2b0777e0726491cd39665a2848675024c
+- Саммари:
+  - Исправлены регрессии тестов после добавления tool execution pipeline: history renderer снова может рендерить stored EVENT подробно в unit tests, а startup UI схлопывает старые task/tool events только в стандартном запуске приложения.
+  - `TaskStateStore.read()` снова выполняет обычное чтение сохраненного состояния, а filtering terminal/stale MCP states вынесен в `readResumable()` для старта orchestrator.
+  - Повторные validation failures снова переводят задачу в PAUSED, сохраняя совместимость pause/resume и planning swarm resume.
