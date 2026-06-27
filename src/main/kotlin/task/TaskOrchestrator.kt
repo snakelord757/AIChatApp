@@ -18,7 +18,7 @@ class TaskOrchestrator(
     private val toolExecutionPipeline: ToolExecutionPipeline? = null
 ) {
     private val maxValidationFailures = 2
-    private var activeTask: TaskState? = stateStore.read()
+    private var activeTask: TaskState? = stateStore.readResumable()
 
     @Volatile
     private var pauseRequested: Boolean = activeTask?.lifecycleStatus == TaskLifecycleStatus.PAUSED
@@ -83,7 +83,7 @@ class TaskOrchestrator(
                 updatedAt = Instant.now()
             )
             activeTask = failed
-            clearSavedTerminalState()
+            save(failed)
             throw exception
         }
 
@@ -143,22 +143,18 @@ class TaskOrchestrator(
                 activeTask = completed
                 memoryRepository?.setWorkingStatus(TaskStatus.DONE)
                 historyRepository.addAssistant(result.output, result.tokenUsage)
-                clearSavedTerminalState()
+                save(completed)
                 return OrchestratorResponse(result.output, result.tokenUsage)
             }
 
             if (shouldFailForRepeatedValidation(state, result)) {
-                val failed = state.copy(
-                    lifecycleStatus = TaskLifecycleStatus.FAILED,
-                    results = state.results + result,
-                    stages = state.stages + StageState(state.currentStage, result = result),
-                    updatedAt = Instant.now(),
-                    pauseReason = null
+                val paused = pauseWithResult(
+                    state = state,
+                    result = result,
+                    reason = "Task paused after repeated validation failures."
                 )
-                activeTask = failed
-                memoryRepository?.setWorkingStatus(TaskStatus.DONE)
-                clearSavedTerminalState()
-                return OrchestratorResponse(result.output.ifBlank { result.summary }, result.tokenUsage, failed)
+                events.onPaused(paused)
+                return OrchestratorResponse("Task paused: ${paused.pauseReason}", result.tokenUsage, paused)
             }
 
             if (shouldPauseForInvalidTask(result)) {
@@ -183,7 +179,7 @@ class TaskOrchestrator(
                 activeTask = completed
                 memoryRepository?.setWorkingStatus(TaskStatus.DONE)
                 historyRepository.addAssistant(result.output, result.tokenUsage)
-                clearSavedTerminalState()
+                save(completed)
                 return OrchestratorResponse(result.output, result.tokenUsage)
             }
         }
@@ -391,10 +387,6 @@ class TaskOrchestrator(
 
     private fun save(state: TaskState) {
         stateStore.write(state)
-    }
-
-    private fun clearSavedTerminalState() {
-        stateStore.clear()
     }
 
     private fun stageHistoryEvent(result: StageResult): String = buildString {

@@ -39,20 +39,23 @@ class TaskStateStore(
                 updatedAt = updatedAt,
                 pauseReason = pauseReason
             )
-            if (
-                state.lifecycleStatus == TaskLifecycleStatus.DONE ||
-                state.lifecycleStatus == TaskLifecycleStatus.FAILED ||
-                state.isStaleFailedPause()
-            ) {
-                archiveInvalidState()
-                null
-            } else {
-                state
-            }
+            state
         } catch (exception: Exception) {
             archiveInvalidState()
             null
         }
+    }
+
+    fun readResumable(): TaskState? {
+        val state = read() ?: return null
+        if (state.lifecycleStatus == TaskLifecycleStatus.DONE ||
+            state.lifecycleStatus == TaskLifecycleStatus.FAILED ||
+            state.isStaleFailedPause()
+        ) {
+            archiveInvalidState()
+            return null
+        }
+        return state
     }
 
     fun write(state: TaskState) {
@@ -76,15 +79,6 @@ class TaskStateStore(
 
     private fun TaskState.isStaleFailedPause(): Boolean {
         if (lifecycleStatus != TaskLifecycleStatus.PAUSED) return false
-        if (
-            currentStage == TaskStage.PLANNING &&
-            results.isEmpty() &&
-            pauseReason.orEmpty().lowercase().let { reason ->
-                reason.contains("pause requested") || reason.contains("cli stopped")
-            }
-        ) {
-            return true
-        }
         if (results.none { !it.success && it.isToolFailure() }) return false
         val reason = pauseReason.orEmpty().lowercase()
         return reason.contains("pause requested") ||

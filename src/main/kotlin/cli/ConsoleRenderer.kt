@@ -65,7 +65,7 @@ class ConsoleRenderer(
         println()
     }
 
-    fun renderHistory(messages: List<ChatMessage>) {
+    fun renderHistory(messages: List<ChatMessage>, summarizeEvents: Boolean = false) {
         prepareOutput()
         var restoredEvents = 0
         messages.forEach { message ->
@@ -73,7 +73,13 @@ class ConsoleRenderer(
                 Role.USER -> renderUser(message.content)
                 Role.ASSISTANT -> renderAssistant(message.content)
                 Role.SYSTEM -> Unit
-                Role.EVENT -> restoredEvents++
+                Role.EVENT -> {
+                    if (summarizeEvents) {
+                        restoredEvents++
+                    } else {
+                        renderStageEvent(message.content)
+                    }
+                }
             }
         }
         if (restoredEvents > 0) {

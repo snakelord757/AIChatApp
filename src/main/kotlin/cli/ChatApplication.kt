@@ -76,7 +76,7 @@ class ChatApplication(
         if (showStartupWarning && startupWarning != null) {
             render { renderer.renderWarning(startupWarning) }
         }
-        render { renderer.renderHistory(historyRepository.all()) }
+        render { renderer.renderHistory(historyRepository.all(), summarizeEvents = true) }
         render { renderer.renderTaskState(taskOrchestrator?.currentState()) }
         renderStickyFactsIfNeeded()
         scheduledTaskManager?.startPersistedTasks()
@@ -254,7 +254,7 @@ class ChatApplication(
                     ConsoleScreen.clear()
                     render { renderer.renderGreeting() }
                     render { renderer.renderSystem("Switched to branch: ${parts[2]}") }
-                    render { renderer.renderHistory(historyRepository.all()) }
+                    render { renderer.renderHistory(historyRepository.all(), summarizeEvents = true) }
                     renderStickyFactsIfNeeded()
                 } else {
                     render { renderer.renderError("Branch not found: ${parts[2]}") }
