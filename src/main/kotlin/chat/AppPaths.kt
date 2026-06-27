@@ -36,10 +36,21 @@ object AppPaths {
 
     fun taskStageAuditPath(): Path = applicationDirectory().resolve("task-stage-audit.jsonl")
 
+    fun scheduledTasksPath(): Path = applicationDirectory().resolve("scheduled-tasks.json")
+
+    fun scheduledTaskStatePath(taskName: String, runId: String): Path =
+        applicationDirectory().resolve("scheduled-tasks").resolve(safePathPart(taskName)).resolve("$runId-state.json")
+
+    fun scheduledTaskStageAuditPath(taskName: String, runId: String): Path =
+        applicationDirectory().resolve("scheduled-tasks").resolve(safePathPart(taskName)).resolve("$runId-audit.jsonl")
+
     fun planningSwarmSessionPath(): Path = applicationDirectory().resolve("planning-swarm-session.json")
 
     fun mcpServersPath(): Path = applicationDirectory().resolve("mcp-servers.json")
 
     private fun isWindows(): Boolean =
         System.getProperty("os.name").contains("windows", ignoreCase = true)
+
+    private fun safePathPart(value: String): String =
+        value.replace(Regex("""[^A-Za-z0-9._-]+"""), "_").ifBlank { "task" }
 }

@@ -19,6 +19,9 @@ import mcp.ProcessMcpClient
 import chat.AppPaths
 import mcp.McpToolCallResult
 import mcp.StoredMcpToolGateway
+import scheduled.ScheduleParsingAgentClient
+import scheduled.ScheduledTaskManager
+import scheduled.ScheduledTaskSummaryAgent
 import task.TaskLifecycleStatus
 import task.TaskOrchestrator
 import task.TaskOrchestratorEvents
@@ -40,14 +43,29 @@ class ChatApplication(
     private val showStartupWarning: Boolean = true,
     private val mcpStore: McpServerStore = McpServerStore(AppPaths.mcpServersPath()),
     private val mcpClient: McpClient = ProcessMcpClient(),
+    private val scheduledTaskManager: ScheduledTaskManager? = null,
+    private val scheduleParsingAgent: ScheduleParsingAgentClient? = null,
+    private val scheduledTaskSummaryAgent: ScheduledTaskSummaryAgent? = null,
     private val mcpScreenFactory: (ConsoleRenderer, ConsoleInput) -> McpScreen = { screenRenderer, screenInput ->
         McpScreen(screenRenderer, mcpStore, mcpClient, screenInput)
+    },
+    private val taskScreenFactory: (ConsoleRenderer, ConsoleInput) -> TaskScreen? = { screenRenderer, screenInput ->
+        val manager = scheduledTaskManager
+        val parser = scheduleParsingAgent
+        if (manager == null || parser == null) null else TaskScreen(
+            renderer = screenRenderer,
+            manager = manager,
+            parser = parser,
+            summaryAgent = scheduledTaskSummaryAgent,
+            input = screenInput
+        )
     },
     private val input: ConsoleInput = ConsoleInput()
 ) {
     private var settings = initialSettings
     private val settingsScreen = SettingsScreen(renderer, input)
     private val mcpScreen = mcpScreenFactory(renderer, input)
+    private val taskScreen = taskScreenFactory(renderer, input)
     private val renderLock = Any()
 
     @Volatile
@@ -61,6 +79,7 @@ class ChatApplication(
         render { renderer.renderHistory(historyRepository.all()) }
         render { renderer.renderTaskState(taskOrchestrator?.currentState()) }
         renderStickyFactsIfNeeded()
+        scheduledTaskManager?.startPersistedTasks()
 
         try {
             while (true) {
@@ -89,6 +108,17 @@ class ChatApplication(
                     userInput.commandName() == "/resume" -> handleResumeCommand(userInput)
                     userInput.commandName() == "/edit" -> handleEditCommand(userInput)
                     userInput.commandName() == "/memory" -> handleMemoryCommand(userInput)
+                    userInput in setOf("/task", "/tasks") -> {
+                        val screen = taskScreen
+                        if (screen == null) {
+                            render { renderer.renderError("Scheduled tasks are unavailable in this session.") }
+                        } else {
+                            screen.open()
+                            render { renderer.renderSystem("Returned to chat. History is saved.") }
+                        }
+                    }
+                    userInput.commandName() in setOf("/task", "/tasks") ->
+                        render { renderer.renderError("Enter /task to open task management, then use schedule, stop, clear, or summary inside the task screen.") }
                     userInput == "/checkpoint" -> {
                         historyRepository.checkpoint()
                         render { renderer.renderSystem("Checkpoint saved.") }
@@ -127,6 +157,7 @@ class ChatApplication(
             }
             render { renderer.renderSystem("Input ended. Application stopped.") }
         } finally {
+            scheduledTaskManager?.shutdown()
             taskOrchestrator?.pauseActiveOnShutdown()
         }
     }
