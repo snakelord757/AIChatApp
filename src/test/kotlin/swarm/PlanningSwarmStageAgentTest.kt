@@ -314,6 +314,22 @@ class PlanningSwarmStageAgentTest {
     }
 
     @Test
+    fun `non code synthesis keeps mcp tool instructions`() {
+        val orchestrator = SwarmOrchestrator(
+            agents = emptyList(),
+            synthesizerClient = ConstantClient(
+                """{"success":true,"summary":"Use available MCP tool","output":"Use news/fetch_latest with JSON arguments {\"topic\":\"technology\"}, then summarize the result.","issues":[],"requestedChanges":[],"retryReason":null}"""
+            ),
+            maxRounds = 1
+        )
+
+        val result = orchestrator.run(input(userTask = "Summarize technology news"))
+
+        assertContains(result.finalJson, "news/fetch_latest")
+        assertContains(result.finalJson, "topic")
+    }
+
+    @Test
     fun `non code paused swarm resets saved software implementation dialogue`() {
         val directory = Files.createTempDirectory("aichat-swarm-reset-software-dialogue-test")
         try {

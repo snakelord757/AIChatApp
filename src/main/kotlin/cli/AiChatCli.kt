@@ -16,6 +16,12 @@ import memory.MemoryStore
 import mcp.McpServerStore
 import mcp.ProcessMcpClient
 import mcp.StoredMcpToolGateway
+import scheduled.DeepSeekScheduleParsingAgent
+import scheduled.DeepSeekScheduledTaskSummaryAgent
+import scheduled.DemoScheduleParsingAgent
+import scheduled.DemoScheduledTaskSummaryAgent
+import scheduled.ScheduledTaskManager
+import scheduled.ScheduledTaskStore
 import task.DeepSeekStageChatClient
 import task.DefaultStageAgentFactory
 import task.StageChatClient
@@ -146,27 +152,61 @@ object AiChatCli {
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient(role.displayName)
                 }
             }
+            fun createStageAgentFactory(): DefaultStageAgentFactory = DefaultStageAgentFactory(
+                clientFactory = stageClientFactory,
+                settingsProvider = { settingsRef.get() },
+                swarmClientFactory = swarmStageClientFactory,
+                swarmSynthesizerClientFactory = stageClientFactory,
+                swarmSessionStore = JsonSwarmSessionStore(AppPaths.planningSwarmSessionPath()),
+                mcpToolsProvider = mcpToolGateway::availableTools,
+                stageClientFactory = stageAwareClientFactory
+            )
+
             val taskOrchestrator = TaskOrchestrator(
                 historyRepository = historyRepository,
                 memoryRepository = memoryRepository,
                 stateStore = TaskStateStore(AppPaths.taskStatePath()),
-                stageAgentFactory = DefaultStageAgentFactory(
-                    clientFactory = stageClientFactory,
-                    settingsProvider = { settingsRef.get() },
-                    swarmClientFactory = swarmStageClientFactory,
-                    swarmSynthesizerClientFactory = stageClientFactory,
-                    swarmSessionStore = JsonSwarmSessionStore(AppPaths.planningSwarmSessionPath()),
-                    mcpToolsProvider = mcpToolGateway::availableTools,
-                    stageClientFactory = stageAwareClientFactory
-                ),
+                stageAgentFactory = createStageAgentFactory(),
                 stageAuditStore = JsonlTaskStageAuditStore(AppPaths.taskStageAuditPath()),
                 contextProvider = OrchestratorTaskContextProvider(
                     settingsProvider = { settingsRef.get() },
                     historyRepository = historyRepository,
                     invariantRepository = invariantRepository,
-                    memoryRepository = memoryRepository
+                    memoryRepository = memoryRepository,
+                    mcpToolsProvider = mcpToolGateway::availableTools
                 )
             )
+            val scheduledTaskManager = ScheduledTaskManager(
+                store = ScheduledTaskStore(AppPaths.scheduledTasksPath()),
+                orchestratorFactory = { taskName, runId ->
+                    TaskOrchestrator(
+                        historyRepository = historyRepository,
+                        memoryRepository = memoryRepository,
+                        stateStore = TaskStateStore(AppPaths.scheduledTaskStatePath(taskName, runId)),
+                        stageAgentFactory = createStageAgentFactory(),
+                        stageAuditStore = JsonlTaskStageAuditStore(AppPaths.scheduledTaskStageAuditPath(taskName, runId)),
+                        contextProvider = OrchestratorTaskContextProvider(
+                            settingsProvider = { settingsRef.get() },
+                            historyRepository = historyRepository,
+                            invariantRepository = invariantRepository,
+                            memoryRepository = memoryRepository,
+                            mcpToolsProvider = mcpToolGateway::availableTools
+                        )
+                    )
+                }
+            )
+            val scheduleParsingAgent = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> DeepSeekScheduleParsingAgent { settingsRef.get() }
+                is LocalPropertiesConfig.Result.Failure -> DemoScheduleParsingAgent()
+            }
+            val scheduledTaskSummaryAgent = when (configResult) {
+                is LocalPropertiesConfig.Result.Success -> DeepSeekScheduledTaskSummaryAgent(
+                    settingsProvider = { settingsRef.get() },
+                    memoryRepository = memoryRepository,
+                    invariantRepository = invariantRepository
+                )
+                is LocalPropertiesConfig.Result.Failure -> DemoScheduledTaskSummaryAgent()
+            }
 
             ChatApplication(
                 agent = agent,
@@ -181,7 +221,10 @@ object AiChatCli {
                 startupWarning = pricingWarning,
                 showStartupWarning = restoredMessages.isEmpty(),
                 mcpStore = mcpStore,
-                mcpClient = mcpClient
+                mcpClient = mcpClient,
+                scheduledTaskManager = scheduledTaskManager,
+                scheduleParsingAgent = scheduleParsingAgent,
+                scheduledTaskSummaryAgent = scheduledTaskSummaryAgent
             ).run()
         } finally {
             historyStore.close()
@@ -226,7 +269,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /mcp, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /mcp, /task, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }

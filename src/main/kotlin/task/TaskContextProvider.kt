@@ -4,6 +4,7 @@ import agent.AgentSettings
 import chat.ChatHistoryRepository
 import invariants.InvariantRepository
 import memory.MemoryRepository
+import mcp.McpTool
 
 interface TaskContextProvider {
     fun contextFor(state: TaskState): String
@@ -17,12 +18,14 @@ class OrchestratorTaskContextProvider(
     private val settingsProvider: () -> AgentSettings,
     private val historyRepository: ChatHistoryRepository,
     private val invariantRepository: InvariantRepository? = null,
-    private val memoryRepository: MemoryRepository?
+    private val memoryRepository: MemoryRepository?,
+    private val mcpToolsProvider: () -> List<McpTool> = { emptyList() }
 ) : TaskContextProvider {
     override fun contextFor(state: TaskState): String {
         val settings = settingsProvider()
         val extraSystemMessages = invariantsFor(state.currentStage) +
-            memoryRepository?.contextMessages().orEmpty()
+            memoryRepository?.contextMessages().orEmpty() +
+            mcpToolsFor(state.currentStage)
         val contextMessages = extraSystemMessages.filterForTask(state)
         val chatContext = historyRepository.apiContextMessages(settings, contextMessages)
             .joinToString(separator = "\n\n") { message ->
@@ -37,6 +40,28 @@ class OrchestratorTaskContextProvider(
         } else {
             emptyList()
         }
+
+    private fun mcpToolsFor(stage: TaskStage): List<chat.ChatMessage> {
+        if (stage != TaskStage.PLANNING && stage != TaskStage.EXECUTION) return emptyList()
+        val tools = runCatching { mcpToolsProvider() }.getOrElse { emptyList() }
+        if (tools.isEmpty()) return emptyList()
+        return listOf(
+            chat.ChatMessage(
+                chat.Role.SYSTEM,
+                buildString {
+                    appendLine("MCP tools available to scheduled and orchestrated task execution:")
+                    appendLine("Planning must explicitly identify the exact server/tool and JSON arguments when a tool is relevant.")
+                    appendLine("Execution can call these tools through the MCP tool gateway; do not invent tool results.")
+                    tools.forEach { tool ->
+                        append("- ${tool.serverName}/${tool.name}")
+                        tool.description?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+                        tool.inputSchema?.takeIf { it.isNotBlank() }?.let { append(" inputSchema=$it") }
+                        appendLine()
+                    }
+                }.trimEnd()
+            )
+        )
+    }
 
     private fun List<chat.ChatMessage>.filterForTask(state: TaskState): List<chat.ChatMessage> {
         if (TaskDomainClassifier.isProgrammingTask(state.userTask)) return this

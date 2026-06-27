@@ -82,6 +82,7 @@ class SwarmOrchestrator(
                 If the request is impossible, contradictory, or blocked by invariants, return success false.
                 If the user's task is not explicitly about software, do not synthesize software modules, data classes, functions, interfaces, engines, registries, APIs, implementation languages, code examples, internal stage agents, handoff, checkpoints, or architectural constraints.
                 For travel, personal advice, business, writing, or research tasks, keep the final plan in that domain.
+                If working context lists MCP tools and one is relevant, preserve the exact server/tool name and suggested JSON arguments in the plan. MCP tool use is an external capability, not a software implementation artifact.
                 Do not use Markdown blockquotes or lines starting with the CLI prompt marker.
                 """.trimIndent()
             ),

@@ -234,10 +234,14 @@ internal object NonCodeSwarmGuard {
 
     private fun sanitizeText(value: String): String =
         value.lineSequence()
-            .filterNot { line -> lineRemovalPatterns.any { it.containsMatchIn(line) } }
+            .filterNot { line -> !line.isMcpToolLine() && lineRemovalPatterns.any { it.containsMatchIn(line) } }
             .joinToString("\n")
             .replace(Regex("""\bcheckpoint\b""", RegexOption.IGNORE_CASE), "step")
             .replace(Regex("""\bhandoff\b""", RegexOption.IGNORE_CASE), "next step")
             .replace(Regex("""\barchitectural\b""", RegexOption.IGNORE_CASE), "structural")
             .trim()
+
+    private fun String.isMcpToolLine(): Boolean =
+        contains("MCP", ignoreCase = true) ||
+            Regex("""\b[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\b""").containsMatchIn(this)
 }

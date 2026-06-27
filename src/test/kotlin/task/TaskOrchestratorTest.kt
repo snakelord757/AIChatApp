@@ -9,6 +9,7 @@ import memory.MemoryRepository
 import memory.MemoryStore
 import memory.TaskStatus
 import chat.Role
+import mcp.McpTool
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -130,6 +131,46 @@ class TaskOrchestratorTest {
             assertTrue(invariantIndex >= 0)
             assertTrue(memoryIndex > invariantIndex)
             assertContains(context, "Do not use shell strings.")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `planning context includes available mcp tools`() {
+        val directory = Files.createTempDirectory("aichat-stage-mcp-context-test")
+        try {
+            val history = ChatHistoryRepository(systemPrompt = "system")
+            val factory = RecordingFactory()
+            val orchestrator = TaskOrchestrator(
+                historyRepository = history,
+                memoryRepository = null,
+                stateStore = TaskStateStore(directory.resolve("task-state.json")),
+                stageAgentFactory = factory,
+                contextProvider = OrchestratorTaskContextProvider(
+                    settingsProvider = { AgentSettings(apiKey = "", systemPrompt = "system") },
+                    historyRepository = history,
+                    memoryRepository = null,
+                    mcpToolsProvider = {
+                        listOf(
+                            McpTool(
+                                serverName = "news",
+                                name = "fetch_latest",
+                                description = "Fetch latest news",
+                                inputSchema = """{"type":"object","properties":{"topic":{"type":"string"}}}"""
+                            )
+                        )
+                    }
+                )
+            )
+
+            orchestrator.runTask("Summarize latest news")
+
+            val context = factory.inputsByStage.getValue(TaskStage.PLANNING).workingContext
+            assertContains(context, "MCP tools available to scheduled and orchestrated task execution:")
+            assertContains(context, "news/fetch_latest")
+            assertContains(context, "Fetch latest news")
+            assertContains(context, """"topic"""")
         } finally {
             directory.toFile().deleteRecursively()
         }

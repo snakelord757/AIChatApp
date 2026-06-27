@@ -12,6 +12,7 @@ import mcp.McpConnectionState
 import mcp.McpServerStatus
 import mcp.McpToolCallResult
 import mcp.McpTool
+import scheduled.ScheduledTask
 import task.StageResult
 import task.TaskState
 import task.TaskStage
@@ -37,6 +38,7 @@ class ConsoleRenderer(
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
         println("${Ansi.style("/memory", Ansi.CYAN)} - show Markdown memory commands")
+        println("${Ansi.style("/task", Ansi.CYAN)} - manage scheduled background tasks")
         println("${Ansi.style("/edit invariants", Ansi.CYAN)} - open assistant invariants")
         println("${Ansi.style("/pause", Ansi.CYAN)} - pause the active task")
         println("${Ansi.style("/resume", Ansi.CYAN)} - resume a paused task")
@@ -306,6 +308,22 @@ class ConsoleRenderer(
         println("Permanent: ${paths.permanent}")
         println("Personal: ${paths.personal}")
         println("Working: ${paths.work}")
+        println()
+    }
+
+    fun renderScheduledTasks(tasks: List<ScheduledTask>) {
+        prepareOutput()
+        println()
+        println(Ansi.style("Scheduled Tasks", Ansi.BOLD, Ansi.CYAN))
+        if (tasks.isEmpty()) {
+            println("No scheduled tasks saved.")
+        } else {
+            tasks.forEach { task ->
+                println("- ${task.name}: ${task.status}, every ${task.interval}")
+                println("  Goal: ${task.taskGoal}")
+                println("  Last run: ${task.lastRunAt ?: "never"}, records: ${task.records.size}")
+            }
+        }
         println()
     }
 
