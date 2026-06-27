@@ -17,6 +17,7 @@ class ChatHistoryBusyException : Exception(
 )
 
 class ChatHistoryStore private constructor(
+    private val path: Path,
     private val channel: FileChannel,
     private val lock: FileLock
 ) : Closeable {
@@ -29,7 +30,12 @@ class ChatHistoryStore private constructor(
         bytes.flip()
         val json = StandardCharsets.UTF_8.decode(bytes).toString().trim()
         if (json.isEmpty()) return ChatHistoryState()
-        val state = ChatHistoryJson.decodeState(json)
+        val state = try {
+            ChatHistoryJson.decodeState(json)
+        } catch (exception: RuntimeException) {
+            archiveInvalidHistory(json)
+            return ChatHistoryState()
+        }
         val restoredMessages = state.messages.map(::repairRestoredMessage)
         return state.copy(
             messages = addMissingSummaryEvent(restoredMessages, state.summary),
@@ -77,6 +83,15 @@ class ChatHistoryStore private constructor(
         channel.force(true)
     }
 
+    private fun archiveInvalidHistory(json: String) {
+        val archivePath = invalidPath(path)
+        runCatching {
+            archivePath.parent?.let(Files::createDirectories)
+            Files.writeString(archivePath, json, StandardCharsets.UTF_8)
+        }
+        writeJson(ChatHistoryJson.encodeState(ChatHistoryState()))
+    }
+
     private fun addMissingSummaryEvent(messages: List<ChatMessage>, summary: ChatSummary?): List<ChatMessage> {
         if (summary == null) return messages
         val event = ChatMessage(Role.EVENT, summaryUsageMessage(summary.usage))
@@ -96,8 +111,12 @@ class ChatHistoryStore private constructor(
     }
 
     override fun close() {
-        lock.release()
-        channel.close()
+        runCatching {
+            if (lock.isValid) lock.release()
+        }
+        runCatching {
+            channel.close()
+        }
     }
 
     companion object {
@@ -124,9 +143,15 @@ class ChatHistoryStore private constructor(
                 throw ChatHistoryBusyException()
             }
 
-            return ChatHistoryStore(channel, lock)
+            return ChatHistoryStore(normalizedPath, channel, lock)
         }
 
         fun defaultHistoryPath(): Path = AppPaths.historyPath()
+
+        private fun invalidPath(path: Path): Path {
+            val timestamp = System.currentTimeMillis()
+            val fileName = path.fileName?.toString() ?: "chat-history.json"
+            return path.resolveSibling("$fileName.invalid-$timestamp")
+        }
     }
 }

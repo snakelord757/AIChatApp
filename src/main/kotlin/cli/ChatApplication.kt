@@ -86,7 +86,11 @@ class ChatApplication(
                 render { renderer.prompt() }
                 val rawInput = input.readLine()
                 render { renderer.finishPromptInput(clearSubmittedLine = input.isInteractive()) }
-                val userInput = rawInput?.normalizeChatInput() ?: break
+                if (rawInput == null) {
+                    render { renderer.renderSystem("Input stream is closed. If you started from the IDE, use an interactive Run console or stop the stale run and start again.") }
+                    break
+                }
+                val userInput = rawInput.normalizeChatInput()
 
                 when {
                     userInput.isBlank() -> render { renderer.renderSystem("Enter a message or command.") }
@@ -444,9 +448,30 @@ class ChatApplication(
         } catch (exception: RuntimeException) {
             renderBackground { renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}") }
             renderStickyFactsIfNeeded(background = true)
+        } catch (exception: Exception) {
+            if (isExpectedTaskShutdown(exception)) {
+                renderBackground { renderer.renderSystem("Task paused.") }
+            } else {
+                renderBackground { renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}") }
+            }
+            renderStickyFactsIfNeeded(background = true)
         } finally {
             activeTaskThread = null
         }
+    }
+
+    private fun isExpectedTaskShutdown(exception: Exception): Boolean =
+        hasInterruptCause(exception)
+
+    private fun hasInterruptCause(exception: Throwable): Boolean {
+        var current: Throwable? = exception
+        while (current != null) {
+            if (current is InterruptedException || current is java.nio.channels.ClosedByInterruptException) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     private fun renderStickyFactsIfNeeded(background: Boolean = false) {

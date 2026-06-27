@@ -64,10 +64,14 @@ class ScheduledTaskManager(
                 try {
                     Thread.sleep(task.interval.toMillis())
                     runOnce(task.name)
+                    if (store.readAll().none { it.name == task.name && it.status == ScheduledTaskStatus.RUNNING }) {
+                        break
+                    }
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
             }
+            workers.remove(task.name, Thread.currentThread())
             onTaskEvent("Scheduled task '${task.name}' stopped.")
         }.also {
             it.name = "aichat-scheduled-${task.name}"
@@ -104,9 +108,16 @@ class ScheduledTaskManager(
             )
         }
         store.update(name) {
-            it.copy(lastRunAt = record.finishedAt, records = it.records + record)
+            it.copy(
+                status = if (record.status == ScheduledTaskRecordStatus.ERROR) ScheduledTaskStatus.STOPPED else it.status,
+                lastRunAt = record.finishedAt,
+                records = it.records + record
+            )
         }
         onTaskEvent("Scheduled task '$name' run ${record.status}.")
+        if (record.status == ScheduledTaskRecordStatus.ERROR) {
+            onTaskEvent("Scheduled task '$name' stopped after an error. Review the last record before restarting it.")
+        }
     }
 
     private fun successRecord(runId: String, started: Instant, response: OrchestratorResponse): ScheduledTaskRecord =

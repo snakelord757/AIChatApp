@@ -31,6 +31,7 @@ import task.TaskOrchestrator
 import task.JsonlTaskStageAuditStore
 import task.OrchestratorTaskContextProvider
 import task.TaskStateStore
+import task.ToolExecutionPipeline
 import swarm.JsonSwarmSessionStore
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
@@ -76,6 +77,8 @@ object AiChatCli {
             ChatHistoryStore.open()
         } catch (exception: ChatHistoryBusyException) {
             renderer.renderError(exception.message ?: "Cannot continue because the chat history file is locked by another process.")
+            renderer.renderSystem("History file: ${AppPaths.historyPath()}")
+            renderer.renderSystem("Stop the previous AIChatApp run in the IDE, then start again.")
             return
         }
 
@@ -174,7 +177,8 @@ object AiChatCli {
                     invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository,
                     mcpToolsProvider = mcpToolGateway::availableTools
-                )
+                ),
+                toolExecutionPipeline = ToolExecutionPipeline(mcpToolGateway)
             )
             val scheduledTaskManager = ScheduledTaskManager(
                 store = ScheduledTaskStore(AppPaths.scheduledTasksPath()),
@@ -191,7 +195,8 @@ object AiChatCli {
                             invariantRepository = invariantRepository,
                             memoryRepository = memoryRepository,
                             mcpToolsProvider = mcpToolGateway::availableTools
-                        )
+                        ),
+                        toolExecutionPipeline = ToolExecutionPipeline(mcpToolGateway)
                     )
                 }
             )

@@ -66,9 +66,9 @@ class DeepSeekAiAgent(
         val finalResponse = if (toolCall == null || mcpToolGateway == null) {
             response
         } else {
-            val argumentsJson = sanitizedMcpArguments(toolCall)
-            summaryEvents.onMcpToolCallStarted(toolCall.serverName, toolCall.toolName, argumentsJson)
             val toolResult = try {
+                val argumentsJson = sanitizedMcpArguments(toolCall)
+                summaryEvents.onMcpToolCallStarted(toolCall.serverName, toolCall.toolName, argumentsJson)
                 mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
             } catch (exception: RuntimeException) {
                 val message = exception.message ?: "Could not call MCP tool."
@@ -183,6 +183,7 @@ class DeepSeekAiAgent(
                 MCP tools are available. Use them when they can answer the user's request better than guessing.
                 To request exactly one MCP tool call, respond only with compact JSON in this form:
                 {"mcpToolCall":{"server":"serverName","tool":"toolName","arguments":{}}}
+                Treat each inputSchema as a strict contract. Use only declared properties and satisfy required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints exactly.
                 Available MCP tools:
                 $toolList
                 """.trimIndent()

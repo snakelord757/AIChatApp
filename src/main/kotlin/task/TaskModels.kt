@@ -29,7 +29,8 @@ data class StageResult(
     val issues: List<String> = emptyList(),
     val requestedChanges: List<String> = emptyList(),
     val retryReason: String? = null,
-    val tokenUsage: TokenUsage = TokenUsage.ZERO
+    val tokenUsage: TokenUsage = TokenUsage.ZERO,
+    val toolExecutionPlanJson: String? = null
 )
 
 data class StageState(

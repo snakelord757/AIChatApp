@@ -2,6 +2,7 @@ package mcp
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class McpToolArgumentSanitizerTest {
     @Test
@@ -41,5 +42,31 @@ class McpToolArgumentSanitizerTest {
         val sanitized = McpToolArgumentSanitizer.sanitize("""{"name":"Zelda"}""", tool)
 
         assertEquals("""{"name":"Zelda"}""", sanitized)
+    }
+
+    @Test
+    fun `rejects non object arguments for object schema`() {
+        val tool = McpTool(
+            serverName = "amiibo_api",
+            name = "load_figure",
+            inputSchema = """{"type":"object","properties":{"amiiboId":{"type":"string"}}}"""
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            McpToolArgumentSanitizer.sanitize("[]", tool)
+        }
+    }
+
+    @Test
+    fun `rejects string arguments that violate declared schema constraints`() {
+        val tool = McpTool(
+            serverName = "amiibo_api",
+            name = "load_figure",
+            inputSchema = """{"type":"object","required":["amiiboId"],"properties":{"amiiboId":{"type":"string","minLength":16,"maxLength":16,"pattern":"^[0-9a-fA-F]{16}$"}}}"""
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            McpToolArgumentSanitizer.sanitize("""{"amiiboId":"Animal Crossing"}""", tool)
+        }
     }
 }

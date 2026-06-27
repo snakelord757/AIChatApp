@@ -25,6 +25,12 @@ class ProcessMcpClient(
     private val requestIds = AtomicLong(1)
 
     override fun configure(configs: List<McpServerConfig>) {
+        val currentNames = configs.map { it.name }.toSet()
+        this.configs.keys.filter { it !in currentNames }.toList().forEach { staleName ->
+            close(staleName)
+            this.configs.remove(staleName)
+            statuses.remove(staleName)
+        }
         configs.forEach { config ->
             this.configs[config.name] = config
             statuses.putIfAbsent(config.name, McpServerStatus(config.name, McpConnectionState.CONFIGURED))
@@ -133,9 +139,19 @@ class ProcessMcpClient(
         return McpToolCallResult(
             serverName = serverName,
             toolName = toolName,
-            content = McpJson.stringify(JsonValue.ObjectValue(result)),
+            content = result.contentText(),
             isError = (result["isError"] as? JsonValue.Bool)?.value == true
         )
+    }
+
+    private fun Map<String, JsonValue>.contentText(): String {
+        val content = this["content"]?.asArray().orEmpty()
+        val text = content.mapNotNull { item ->
+            val objectValue = item.asObject() ?: return@mapNotNull null
+            objectValue["text"]?.asString()
+                ?: objectValue["data"]?.let(McpJson::stringify)
+        }
+        return text.joinToString("\n").ifBlank { McpJson.stringify(JsonValue.ObjectValue(this)) }
     }
 
     override fun close() {

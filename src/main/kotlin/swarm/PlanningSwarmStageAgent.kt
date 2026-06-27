@@ -4,6 +4,8 @@ import chat.ChatMessage
 import chat.Role
 import chat.TokenUsage
 import formatting.CliPromptMarkerNormalizer
+import mcp.McpJson
+import mcp.asObject
 import task.StageAgent
 import task.StageChatClient
 import task.StageInput
@@ -99,7 +101,13 @@ class PlanningSwarmStageAgent(
             issues = json.extractArray("issues").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
             requestedChanges = json.extractArray("requestedChanges").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
             retryReason = json.extractString("retryReason")?.let(CliPromptMarkerNormalizer::normalizeGeneratedText),
-            tokenUsage = usage
+            tokenUsage = usage,
+            toolExecutionPlanJson = extractObjectJson(json, "toolExecutionPlan")
         )
+    }
+
+    private fun extractObjectJson(json: String, key: String): String? {
+        val root = runCatching { McpJson.parse(json).asObject() }.getOrNull() ?: return null
+        return root[key]?.let(McpJson::stringify)
     }
 }

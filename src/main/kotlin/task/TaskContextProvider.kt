@@ -50,7 +50,8 @@ class OrchestratorTaskContextProvider(
                 chat.Role.SYSTEM,
                 buildString {
                     appendLine("MCP tools available to scheduled and orchestrated task execution:")
-                    appendLine("Planning must explicitly identify the exact server/tool and JSON arguments when a tool is relevant.")
+                    appendLine("When one of these tools is relevant, Planning must include a top-level toolExecutionPlan with exact server/tool names and JSON arguments.")
+                    appendLine("Do not only mention tools in prose; toolExecutionPlan is the executable contract.")
                     appendLine("Execution can call these tools through the MCP tool gateway; do not invent tool results.")
                     tools.forEach { tool ->
                         append("- ${tool.serverName}/${tool.name}")
@@ -68,6 +69,9 @@ class OrchestratorTaskContextProvider(
         if (state.currentStage != TaskStage.PLANNING && state.currentStage != TaskStage.VALIDATION) return this
 
         return mapNotNull { message ->
+            if (message.content.startsWith("MCP tools available to scheduled and orchestrated task execution:")) {
+                return@mapNotNull message
+            }
             val filteredContent = message.content
                 .lineSequence()
                 .filterNot(TaskDomainClassifier::isCodeContextLine)

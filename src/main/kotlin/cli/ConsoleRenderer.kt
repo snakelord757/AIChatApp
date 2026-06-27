@@ -67,13 +67,17 @@ class ConsoleRenderer(
 
     fun renderHistory(messages: List<ChatMessage>) {
         prepareOutput()
+        var restoredEvents = 0
         messages.forEach { message ->
             when (message.role) {
                 Role.USER -> renderUser(message.content)
                 Role.ASSISTANT -> renderAssistant(message.content)
                 Role.SYSTEM -> Unit
-                Role.EVENT -> renderStageEvent(message.content)
+                Role.EVENT -> restoredEvents++
             }
+        }
+        if (restoredEvents > 0) {
+            renderSystem("Restored $restoredEvents prior task/tool event(s).")
         }
     }
 
@@ -85,6 +89,10 @@ class ConsoleRenderer(
         }
         if (content.startsWith("Stage PLANNING swarm dialogue:")) {
             renderSwarmDialogue(content)
+            return
+        }
+        if (content.startsWith("Tool ")) {
+            renderToolPipelineEvent(content)
             return
         }
         val stageEvent = content.toStageEvent()
@@ -112,6 +120,13 @@ class ConsoleRenderer(
             println("Requested changes:")
             stageEvent.requestedChanges.forEach { println("- $it") }
         }
+        println()
+    }
+
+    private fun renderToolPipelineEvent(content: String) {
+        println()
+        println(Ansi.style("Stage event: tool execution", Ansi.BOLD, Ansi.CYAN))
+        println(formatter.format(content))
         println()
     }
 

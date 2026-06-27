@@ -9,14 +9,17 @@ object AppPaths {
             return Paths.get(it).toAbsolutePath().normalize()
         }
 
-        System.getenv("APP_HOME")?.takeIf { it.isNotBlank() }?.let {
-            return Paths.get(it).toAbsolutePath().normalize()
-        }
-
         if (isWindows()) {
             System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }?.let {
                 return Paths.get(it).resolve("AIChatApp").toAbsolutePath().normalize()
             }
+            System.getProperty("user.home")?.takeIf { it.isNotBlank() }?.let {
+                return Paths.get(it).resolve("AppData").resolve("Local").resolve("AIChatApp").toAbsolutePath().normalize()
+            }
+        }
+
+        System.getenv("APP_HOME")?.takeIf { it.isNotBlank() }?.let {
+            return Paths.get(it).toAbsolutePath().normalize()
         }
 
         System.getProperty("user.home")?.takeIf { it.isNotBlank() }?.let {

@@ -14,7 +14,8 @@ class TaskOrchestrator(
     private val stateStore: TaskStateStore,
     private val stageAgentFactory: StageAgentFactory,
     private val stageAuditStore: TaskStageAuditStore = TaskStageAuditStore.None,
-    private val contextProvider: TaskContextProvider = TaskContextProvider.None
+    private val contextProvider: TaskContextProvider = TaskContextProvider.None,
+    private val toolExecutionPipeline: ToolExecutionPipeline? = null
 ) {
     private val maxValidationFailures = 2
     private var activeTask: TaskState? = stateStore.read()
@@ -25,9 +26,7 @@ class TaskOrchestrator(
     fun currentState(): TaskState? = activeTask
 
     fun runTask(userTask: String, events: TaskOrchestratorEvents = TaskOrchestratorEvents.None): OrchestratorResponse {
-        if (activeTask?.lifecycleStatus == TaskLifecycleStatus.PAUSED || !pauseRequested) {
-            pauseRequested = false
-        }
+        pauseRequested = false
         val initial = TaskState(userTask = userTask)
         activeTask = initial
         save(initial)
@@ -84,7 +83,7 @@ class TaskOrchestrator(
                 updatedAt = Instant.now()
             )
             activeTask = failed
-            save(failed)
+            clearSavedTerminalState()
             throw exception
         }
 
@@ -102,10 +101,17 @@ class TaskOrchestrator(
             val agent = stageAgentFactory.create(state.currentStage, liveStageEventSink)
             val attempt = state.results.count { it.stage == state.currentStage } + 1
             val beforeHistory = agent.history
-            val input = stageInput(state)
+            var input = stageInput(state)
 
             events.onStageStarted(state.currentStage)
-            val result = try {
+            val preparationFailure = if (state.currentStage == TaskStage.EXECUTION) {
+                val prepared = prepareExecutionToolPipelineInput(state, input, events, emittedStageEvents)
+                input = prepared.input
+                prepared.failure
+            } else {
+                null
+            }
+            val result = preparationFailure ?: try {
                 executeStage(agent, input, state.currentStage)
             } catch (exception: RuntimeException) {
                 emitStageEvents(agent.history.drop(beforeHistory.size), state.currentStage, events, emittedStageEvents)
@@ -135,13 +141,27 @@ class TaskOrchestrator(
                     updatedAt = Instant.now()
                 )
                 activeTask = completed
-                save(completed)
                 memoryRepository?.setWorkingStatus(TaskStatus.DONE)
                 historyRepository.addAssistant(result.output, result.tokenUsage)
+                clearSavedTerminalState()
                 return OrchestratorResponse(result.output, result.tokenUsage)
             }
 
-            if (shouldPauseForInvalidTask(state, result)) {
+            if (shouldFailForRepeatedValidation(state, result)) {
+                val failed = state.copy(
+                    lifecycleStatus = TaskLifecycleStatus.FAILED,
+                    results = state.results + result,
+                    stages = state.stages + StageState(state.currentStage, result = result),
+                    updatedAt = Instant.now(),
+                    pauseReason = null
+                )
+                activeTask = failed
+                memoryRepository?.setWorkingStatus(TaskStatus.DONE)
+                clearSavedTerminalState()
+                return OrchestratorResponse(result.output.ifBlank { result.summary }, result.tokenUsage, failed)
+            }
+
+            if (shouldPauseForInvalidTask(result)) {
                 val paused = pauseWithResult(
                     state = state,
                     result = result,
@@ -161,9 +181,9 @@ class TaskOrchestrator(
             if (state.currentStage == TaskStage.COMPLETION && result.stage == TaskStage.COMPLETION) {
                 val completed = state.copy(lifecycleStatus = TaskLifecycleStatus.DONE, updatedAt = Instant.now())
                 activeTask = completed
-                save(completed)
                 memoryRepository?.setWorkingStatus(TaskStatus.DONE)
                 historyRepository.addAssistant(result.output, result.tokenUsage)
+                clearSavedTerminalState()
                 return OrchestratorResponse(result.output, result.tokenUsage)
             }
         }
@@ -198,6 +218,72 @@ class TaskOrchestrator(
         }
     }
 
+    private fun prepareExecutionToolPipelineInput(
+        state: TaskState,
+        input: StageInput,
+        events: TaskOrchestratorEvents,
+        emittedStageEvents: MutableSet<String>
+    ): PreparedExecutionInput {
+        val planningResult = state.results.lastOrNull {
+            it.stage == TaskStage.PLANNING && it.success && !it.toolExecutionPlanJson.isNullOrBlank()
+        } ?: return PreparedExecutionInput(input)
+
+        val pipeline = toolExecutionPipeline
+        if (pipeline == null) {
+            val message = "Planning requested a tool execution pipeline, but no MCP tool pipeline executor is configured."
+            emitStageEvent(TaskStage.EXECUTION, message, events, emittedStageEvents)
+            return PreparedExecutionInput(
+                input = input,
+                failure = StageResult(
+                    stage = TaskStage.EXECUTION,
+                    success = false,
+                    summary = "Tool execution pipeline is unavailable.",
+                    output = message,
+                    issues = listOf(message)
+                )
+            )
+        }
+        val run = pipeline.run(planningResult.toolExecutionPlanJson.orEmpty()) { content ->
+            emitStageEvent(TaskStage.EXECUTION, content, events, emittedStageEvents)
+        }
+        if (!run.success) {
+            return PreparedExecutionInput(
+                input = input,
+                failure = StageResult(
+                    stage = TaskStage.EXECUTION,
+                    success = false,
+                    summary = run.summary,
+                    output = run.output,
+                    issues = listOf(run.output)
+                )
+            )
+        }
+        val context = buildString {
+            append(input.workingContext)
+            if (isNotBlank()) appendLine().appendLine()
+            appendLine("Tool execution pipeline results for ExecutionAgent:")
+            append(run.output)
+        }
+        return PreparedExecutionInput(input.copy(workingContext = context))
+    }
+
+    private data class PreparedExecutionInput(
+        val input: StageInput,
+        val failure: StageResult? = null
+    )
+
+    private fun emitStageEvent(
+        stage: TaskStage,
+        content: String,
+        events: TaskOrchestratorEvents,
+        emitted: MutableSet<String>
+    ) {
+        if (emitted.add(content)) {
+            events.onStageEvent(stage, content)
+            historyRepository.addEvent(content)
+        }
+    }
+
     private fun throwIfPauseRequested(currentStage: TaskStage) {
         if (pauseRequested || Thread.currentThread().isInterrupted) {
             throw TaskPausedException("Pause requested before $currentStage.")
@@ -229,10 +315,15 @@ class TaskOrchestrator(
         return updated
     }
 
-    private fun shouldPauseForInvalidTask(state: TaskState, result: StageResult): Boolean {
+    private fun shouldPauseForInvalidTask(result: StageResult): Boolean {
+        if (result.stage != TaskStage.VALIDATION || result.success) return false
+        return needsUserClarification(result)
+    }
+
+    private fun shouldFailForRepeatedValidation(state: TaskState, result: StageResult): Boolean {
         if (result.stage != TaskStage.VALIDATION || result.success) return false
         val failures = state.results.count { it.stage == TaskStage.VALIDATION && !it.success } + 1
-        return failures >= maxValidationFailures || needsUserClarification(result)
+        return failures >= maxValidationFailures
     }
 
     private fun needsUserClarification(result: StageResult): Boolean {
@@ -300,6 +391,10 @@ class TaskOrchestrator(
 
     private fun save(state: TaskState) {
         stateStore.write(state)
+    }
+
+    private fun clearSavedTerminalState() {
+        stateStore.clear()
     }
 
     private fun stageHistoryEvent(result: StageResult): String = buildString {

@@ -78,6 +78,10 @@ class SwarmOrchestrator(
                 You are the planning swarm orchestrator.
                 You are not a TaskStage. Synthesize the PLANNING swarm discussion into StageResult-compatible JSON.
                 Return only JSON with success, summary, output, issues, requestedChanges, and retryReason.
+                When MCP tools must run before execution, include a top-level toolExecutionPlan object with chains, chain ids, mode values of sequential or parallel, dependsOn arrays, input objects, steps, step ids, server/tool names, arguments, inputMappings, and constraints.allowParallel.
+                Use inputMappings for data handoff paths such as chain.input.query, chains.chain_id.output, steps.step_id.output, or steps.step_id.content.
+                If a prior tool output is a JSON object and a later tool needs one field, map that exact field path, for example steps.search_series.output.key.
+                If no ordered MCP tool pipeline is needed, omit toolExecutionPlan.
                 The output must be a concise neutral execution plan, not a discussion log.
                 If the request is impossible, contradictory, or blocked by invariants, return success false.
                 If the user's task is not explicitly about software, do not synthesize software modules, data classes, functions, interfaces, engines, registries, APIs, implementation languages, code examples, internal stage agents, handoff, checkpoints, or architectural constraints.

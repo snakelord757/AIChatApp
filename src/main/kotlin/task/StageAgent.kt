@@ -71,6 +71,14 @@ class PromptedStageAgent(
     private fun stagePrompt(input: StageInput): String = buildString {
         appendLine("Return ONLY valid JSON in this shape:")
         appendLine("""{"success":true,"summary":"short summary","output":"human-readable result","issues":[],"requestedChanges":[],"retryReason":null}""")
+        if (stage == TaskStage.PLANNING) {
+            appendLine("When MCP tools must run before execution, include a deterministic toolExecutionPlan object at the top level.")
+            appendLine("""Use this exact optional shape: "toolExecutionPlan":{"chains":[{"id":"chain_id","mode":"sequential","dependsOn":[],"input":{},"steps":[{"id":"step_id","server":"serverName","tool":"toolName","arguments":{},"dependsOn":[],"inputMappings":{}}]}],"constraints":{"allowParallel":true}}""")
+            appendLine("Allowed chain mode values are sequential and parallel. dependsOn values must reference earlier chain or step identifiers.")
+            appendLine("inputMappings keys are argument field names. Values must be source paths such as chain.input.query, chains.chain_id.output, steps.step_id.output, or steps.step_id.content.")
+            appendLine("When a prior tool output is a JSON object, map specific fields with paths such as steps.step_id.output.key instead of passing the whole output.")
+            appendLine("If no ordered tool pipeline is needed, omit toolExecutionPlan.")
+        }
         appendLine("The output field must be readable text for the user or next stage, not escaped diagnostic context.")
         appendLine("Do not use Markdown blockquotes or lines starting with >; that marker is reserved for the CLI input prompt.")
         appendLine("Follow your stage contract exactly. Do not perform work assigned to another stage.")
@@ -112,8 +120,14 @@ class PromptedStageAgent(
             issues = extractArray(content, "issues").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
             requestedChanges = extractArray(content, "requestedChanges").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
             retryReason = extractString(content, "retryReason")?.let(CliPromptMarkerNormalizer::normalizeGeneratedText),
-            tokenUsage = response.usage
+            tokenUsage = response.usage,
+            toolExecutionPlanJson = extractObjectJson(content, "toolExecutionPlan")
         )
+    }
+
+    private fun extractObjectJson(json: String, key: String): String? {
+        val root = runCatching { McpJson.parse(json).asObject() }.getOrNull() ?: return null
+        return root[key]?.let(McpJson::stringify)
     }
 
     private fun extractArray(json: String, key: String): List<String> {
@@ -272,10 +286,17 @@ class DefaultStageAgentFactory(
             Do NOT provide final deliverables, final code, final prose, or the finished solution.
             Do NOT address ExecutionAgent directly and do NOT write command-like prompts such as "ExecutionAgent, do ...".
             If the user asks for code, your plan may mention that ExecutionAgent must produce code, but you must not write that code.
-            If available MCP tools can help answer the user accurately, include the exact server/tool name and suggested JSON arguments for ExecutionAgent in the plan.
+            If available MCP tools can help answer the user accurately, you MUST include a top-level toolExecutionPlan. Do not merely mention tools in prose.
+            In that toolExecutionPlan, include the exact server/tool names and JSON arguments for the required tool calls.
             Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, suggested JSON arguments must be {}.
+            Treat each inputSchema as a strict contract: required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints must be satisfied exactly.
+            If multiple MCP calls must happen in a strict order, include toolExecutionPlan in the top-level JSON response.
+            In toolExecutionPlan, model ordered work as chains with explicit ids, mode values, dependsOn arrays, step ids, tool names, JSON arguments, and inputMappings.
+            Use sequential chains when a later tool needs earlier output. Use parallel chains only when steps are independent or their dependencies are explicit.
+            Put data handoff rules in inputMappings; do not hide dependencies in prose.
+            If a tool output is JSON and a later tool needs one field, map that exact field path, for example steps.search_series.output.key.
             Do not request or call MCP tools yourself in PlanningAgent; only decide whether ExecutionAgent should use them.
-            If no MCP tool is relevant, say that no MCP tool is needed.
+            If no MCP tool is relevant, say that no MCP tool is needed and omit toolExecutionPlan.
             The output field must contain only a concise neutral plan with required deliverables and constraints.
             The summary field must describe the plan, not the final answer.
             ${planningMcpToolCatalog()}
@@ -352,9 +373,9 @@ class DeepSeekStageChatClient(
         }
 
         val events = mutableListOf<String>()
-        val argumentsJson = sanitizedMcpArguments(toolCall)
-        events += mcpToolStartedEvent(toolCall.serverName, toolCall.toolName, argumentsJson)
         val toolResult = try {
+            val argumentsJson = sanitizedMcpArguments(toolCall)
+            events += mcpToolStartedEvent(toolCall.serverName, toolCall.toolName, argumentsJson)
             mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
         } catch (exception: RuntimeException) {
             val message = exception.message ?: "Could not call MCP tool."
@@ -437,6 +458,7 @@ class DeepSeekStageChatClient(
                 To request exactly one MCP tool call, respond only with compact JSON in this form:
                 {"mcpToolCall":{"server":"serverName","tool":"toolName","arguments":{}}}
                 Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, arguments must be {}.
+                Treat each inputSchema as a strict contract. Satisfy required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints exactly.
                 Available MCP tools:
                 ${tools.joinToString("\n", transform = ::toolDescription)}
                 """.trimIndent()

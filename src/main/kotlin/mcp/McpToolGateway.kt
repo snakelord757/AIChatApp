@@ -18,6 +18,10 @@ class StoredMcpToolGateway(
 
     override fun callTool(serverName: String, toolName: String, argumentsJson: String): McpToolCallResult {
         client.configure(store.load())
-        return client.callTool(serverName, toolName, argumentsJson)
+        val tool = runCatching {
+            client.listTools(serverName).firstOrNull { it.name == toolName }
+        }.getOrNull()
+        val sanitizedArgumentsJson = McpToolArgumentSanitizer.sanitize(argumentsJson, tool)
+        return client.callTool(serverName, toolName, sanitizedArgumentsJson)
     }
 }

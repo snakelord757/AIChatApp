@@ -6,6 +6,7 @@ import formatting.CliPromptMarkerNormalizer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 
 class TaskStateStore(
@@ -13,35 +14,95 @@ class TaskStateStore(
 ) {
     fun read(): TaskState? {
         if (!Files.exists(path)) return null
-        val content = Files.readString(path, StandardCharsets.UTF_8)
-        val userTask = field(content, "userTask") ?: return null
-        val id = field(content, "id") ?: return null
-        val lifecycle = field(content, "lifecycleStatus")
-            ?.let { runCatching { TaskLifecycleStatus.valueOf(it) }.getOrNull() }
-            ?: TaskLifecycleStatus.ACTIVE
-        val stage = field(content, "currentStage")
-            ?.let { runCatching { TaskStage.valueOf(it) }.getOrNull() }
-            ?: TaskStage.PLANNING
-        val pauseReason = field(content, "pauseReason")
-        val results = decodeResults(content)
-        val createdAt = field(content, "createdAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
-        val updatedAt = field(content, "updatedAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: createdAt
-        return TaskState(
-            id = id,
-            userTask = userTask,
-            lifecycleStatus = lifecycle,
-            currentStage = stage,
-            stages = if (results.isEmpty()) listOf(StageState(stage)) else results.map { StageState(it.stage, result = it) } + StageState(stage),
-            results = results,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-            pauseReason = pauseReason
-        )
+        return try {
+            val content = Files.readString(path, StandardCharsets.UTF_8)
+            val userTask = field(content, "userTask") ?: return null
+            val id = field(content, "id") ?: return null
+            val lifecycle = field(content, "lifecycleStatus")
+                ?.let { runCatching { TaskLifecycleStatus.valueOf(it) }.getOrNull() }
+                ?: TaskLifecycleStatus.ACTIVE
+            val stage = field(content, "currentStage")
+                ?.let { runCatching { TaskStage.valueOf(it) }.getOrNull() }
+                ?: TaskStage.PLANNING
+            val pauseReason = field(content, "pauseReason")
+            val results = decodeResults(content)
+            val createdAt = field(content, "createdAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
+            val updatedAt = field(content, "updatedAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: createdAt
+            val state = TaskState(
+                id = id,
+                userTask = userTask,
+                lifecycleStatus = lifecycle,
+                currentStage = stage,
+                stages = if (results.isEmpty()) listOf(StageState(stage)) else results.map { StageState(it.stage, result = it) } + StageState(stage),
+                results = results,
+                createdAt = createdAt,
+                updatedAt = updatedAt,
+                pauseReason = pauseReason
+            )
+            if (
+                state.lifecycleStatus == TaskLifecycleStatus.DONE ||
+                state.lifecycleStatus == TaskLifecycleStatus.FAILED ||
+                state.isStaleFailedPause()
+            ) {
+                archiveInvalidState()
+                null
+            } else {
+                state
+            }
+        } catch (exception: Exception) {
+            archiveInvalidState()
+            null
+        }
     }
 
     fun write(state: TaskState) {
         path.parent?.let(Files::createDirectories)
         Files.writeString(path, encode(state), StandardCharsets.UTF_8)
+    }
+
+    fun clear() {
+        runCatching { Files.deleteIfExists(path) }
+    }
+
+    private fun archiveInvalidState() {
+        val fileName = path.fileName?.toString() ?: "task-state.json"
+        val archivePath = path.resolveSibling("$fileName.invalid-${System.currentTimeMillis()}")
+        runCatching {
+            Files.move(path, archivePath, StandardCopyOption.REPLACE_EXISTING)
+        }.getOrElse {
+            runCatching { Files.deleteIfExists(path) }
+        }
+    }
+
+    private fun TaskState.isStaleFailedPause(): Boolean {
+        if (lifecycleStatus != TaskLifecycleStatus.PAUSED) return false
+        if (
+            currentStage == TaskStage.PLANNING &&
+            results.isEmpty() &&
+            pauseReason.orEmpty().lowercase().let { reason ->
+                reason.contains("pause requested") || reason.contains("cli stopped")
+            }
+        ) {
+            return true
+        }
+        if (results.none { !it.success && it.isToolFailure() }) return false
+        val reason = pauseReason.orEmpty().lowercase()
+        return reason.contains("pause requested") ||
+            reason.contains("mcp") ||
+            reason.contains("tool") ||
+            reason.contains("ошиб")
+    }
+
+    private fun StageResult.isToolFailure(): Boolean {
+        val text = listOf(summary, output, retryReason.orEmpty())
+            .plus(issues)
+            .plus(requestedChanges)
+            .joinToString(" ")
+            .lowercase()
+        return text.contains("tool execution pipeline failed") ||
+            text.contains("mcp tool") ||
+            text.contains("amiiboid") ||
+            text.contains("tool step failed")
     }
 
     private fun encode(state: TaskState): String = buildString {
@@ -72,6 +133,7 @@ class TaskStateStore(
         append(""""issues":${encodeArray(result.issues)},""")
         append(""""requestedChanges":${encodeArray(result.requestedChanges)},""")
         append(""""retryReason":${result.retryReason?.let { "\"${JsonTools.escape(it)}\"" } ?: "null"},""")
+        append(""""toolExecutionPlanJson":${result.toolExecutionPlanJson?.let { "\"${JsonTools.escape(it)}\"" } ?: "null"},""")
         append(""""tokenUsage":{"inputTokens":${result.tokenUsage.inputTokens},"outputTokens":${result.tokenUsage.outputTokens},"reasoningTokens":${result.tokenUsage.reasoningTokens}}""")
         append("}")
     }
@@ -100,7 +162,8 @@ class TaskStateStore(
                 inputTokens = longField(json, "inputTokens"),
                 outputTokens = longField(json, "outputTokens"),
                 reasoningTokens = longField(json, "reasoningTokens")
-            )
+            ),
+            toolExecutionPlanJson = field(json, "toolExecutionPlanJson")
         )
     }
 

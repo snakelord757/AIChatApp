@@ -94,6 +94,12 @@ class JsonlTaskStageAuditStore(
             field("retryReason", result.retryReason)
             append(",")
         }
+        if (result.toolExecutionPlanJson == null) {
+            append(""""toolExecutionPlanJson":null,""")
+        } else {
+            field("toolExecutionPlanJson", result.toolExecutionPlanJson)
+            append(",")
+        }
         append(""""tokenUsage":""")
         append(encodeUsage(result.tokenUsage))
         append("}")
