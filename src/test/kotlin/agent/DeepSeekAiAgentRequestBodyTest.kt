@@ -208,6 +208,43 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
+    fun `multiple mcp tool calls are executed before final answer`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        val httpClient = RecordingHttpClient(
+            listOf(
+                assistantResponse(
+                    """
+                    {"mcpToolCalls":[
+                      {"server":"amiibo","tool":"search_amiibo","arguments":{"name":"Mario","limit":1}},
+                      {"server":"files","tool":"read_file","arguments":{"path":"README.md"}}
+                    ]}
+                    """.trimIndent()
+                ),
+                assistantResponse("Combined MCP result")
+            )
+        )
+        val gateway = RecordingMcpGateway()
+        val agent = DeepSeekAiAgent(
+            historyRepository = repository,
+            initialSettings = AgentSettings(apiKey = "key", summaryInterval = 0, systemPrompt = "system"),
+            mcpToolGateway = gateway,
+            httpClient = httpClient
+        )
+
+        val response = agent.send("Use several MCP sources")
+
+        assertEquals("Combined MCP result", response.content)
+        assertEquals(
+            listOf("amiibo/search_amiibo", "files/read_file"),
+            gateway.calls.map { "${it.first}/${it.second}" }
+        )
+        assertContains(httpClient.requestBodies[1], "MCP tool result for amiibo/search_amiibo")
+        assertContains(httpClient.requestBodies[1], "MCP tool result for files/read_file")
+        assertContains(httpClient.requestBodies[1], "amiibo/search_amiibo tool-output")
+        assertContains(httpClient.requestBodies[1], "files/read_file tool-output")
+    }
+
+    @Test
     fun `memory system messages are sent in main request after base system prompt`() {
         val directory = Files.createTempDirectory("aichat-agent-memory-context-test")
         try {
@@ -603,11 +640,14 @@ class DeepSeekAiAgentRequestBodyTest {
         val calls = mutableListOf<Triple<String, String, String>>()
 
         override fun availableTools(): List<McpTool> =
-            listOf(McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"}}}"))
+            listOf(
+                McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"}}}"),
+                McpTool("files", "read_file", "Read file", "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}")
+            )
 
         override fun callTool(serverName: String, toolName: String, argumentsJson: String): McpToolCallResult {
             calls += Triple(serverName, toolName, argumentsJson)
-            return McpToolCallResult(serverName, toolName, "tool-output")
+            return McpToolCallResult(serverName, toolName, "$serverName/$toolName tool-output")
         }
     }
 

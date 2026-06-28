@@ -127,27 +127,34 @@ class ToolExecutionPipeline(
         completedChains: Map<String, CompletedChain>,
         emit: (String) -> Unit
     ): CompletedChain {
-        emit("Tool chain '${chain.id}' started in ${chain.mode.name.lowercase()} mode")
-        emit("Tool chain '${chain.id}' received input: ${chain.inputJson}")
-        chain.dependsOn.takeIf { it.isNotEmpty() }?.let {
-            emit("Tool chain '${chain.id}' depends on: ${it.joinToString(", ")}")
+        val resolvedChain = try {
+            resolveChainInput(chain, completedChains)
+        } catch (exception: RuntimeException) {
+            val message = exception.message ?: "Could not resolve tool chain input."
+            emit("Tool chain failed before MCP call: ${chain.id}: $message")
+            return CompletedChain.failed(chain.id, message)
+        }
+        emit("Tool chain '${resolvedChain.id}' started in ${resolvedChain.mode.name.lowercase()} mode")
+        emit("Tool chain '${resolvedChain.id}' received input: ${resolvedChain.inputJson}")
+        resolvedChain.dependsOn.takeIf { it.isNotEmpty() }?.let {
+            emit("Tool chain '${resolvedChain.id}' depends on: ${it.joinToString(", ")}")
         }
 
         val completedSteps = linkedMapOf<String, CompletedStep>()
-        val pending = chain.steps.associateBy { it.id }.toMutableMap()
+        val pending = resolvedChain.steps.associateBy { it.id }.toMutableMap()
         val executor = Executors.newCachedThreadPool()
         try {
             while (pending.isNotEmpty()) {
                 val ready = pending.values.filter { step -> step.dependsOn.all(completedSteps::containsKey) }
                 if (ready.isEmpty()) {
-                    val message = "No executable steps remain in chain '${chain.id}'."
+                    val message = "No executable steps remain in chain '${resolvedChain.id}'."
                     emit("Tool chain failed: $message")
-                    return CompletedChain.failed(chain.id, message)
+                    return CompletedChain.failed(resolvedChain.id, message)
                 }
-                val runnable = if (chain.mode == ToolChainExecutionMode.PARALLEL) ready else ready.take(1)
+                val runnable = if (resolvedChain.mode == ToolChainExecutionMode.PARALLEL) ready else ready.take(1)
                 val futures = runnable.map { step ->
                     executor.submit(Callable {
-                        executeStep(chain, step, completedChains, completedSteps.toMap(), emit)
+                        executeStep(resolvedChain, step, completedChains, completedSteps.toMap(), emit)
                     })
                 }
                 runnable.zip(futures).forEach { (step, future) ->
@@ -163,7 +170,7 @@ class ToolExecutionPipeline(
                     if (!completed.success) {
                         val message = completed.errorMessage ?: "Tool step '${step.id}' failed."
                         emit("Tool chain failed: $message")
-                        return CompletedChain(chain.id, success = false, steps = completedSteps.values.toList(), errorMessage = message)
+                        return CompletedChain(resolvedChain.id, success = false, steps = completedSteps.values.toList(), errorMessage = message)
                     }
                 }
             }
@@ -172,7 +179,7 @@ class ToolExecutionPipeline(
         }
 
         emit("Tool chain completed: success")
-        return CompletedChain(chain.id, success = true, steps = completedSteps.values.toList())
+        return CompletedChain(resolvedChain.id, success = true, steps = completedSteps.values.toList())
     }
 
     private fun executeStep(
@@ -220,11 +227,42 @@ class ToolExecutionPipeline(
         val base = McpJson.parse(step.argumentsJson).asObject()?.toMutableMap()
             ?: linkedMapOf<String, JsonValue>()
         step.inputMappings.forEach { (target, source) ->
-            base[target] = JsonValue.StringValue(resolveMapping(source, target, chain, completedChains, completedSteps))
+            val value = resolveMapping(source, target, chain, completedChains, completedSteps)
+            if (value.isBlank()) {
+                error("Input mapping for '$target' resolved to blank from '$source'")
+            }
+            base[target] = JsonValue.StringValue(value)
         }
         val tool = gateway.availableTools().firstOrNull { it.serverName == step.serverName && it.name == step.toolName }
         return McpToolArgumentSanitizer.sanitize(McpJson.stringify(JsonValue.ObjectValue(base)), tool)
     }
+
+    private fun resolveChainInput(
+        chain: PlannedToolChain,
+        completedChains: Map<String, CompletedChain>
+    ): PlannedToolChain {
+        val input = McpJson.parse(chain.inputJson).asObject()?.toMutableMap() ?: return chain
+        var changed = false
+        input.replaceAll { key, value ->
+            val expression = value.asString()
+            if (expression != null && looksLikeMappingExpression(expression)) {
+                changed = true
+                JsonValue.StringValue(resolveMapping(expression, key, chain, completedChains, emptyMap()))
+            } else {
+                value
+            }
+        }
+        return if (changed) chain.copy(inputJson = McpJson.stringify(JsonValue.ObjectValue(input))) else chain
+    }
+
+    private fun looksLikeMappingExpression(value: String): Boolean =
+        mappingTerms(value).any { term ->
+            val normalized = normalizeMappingTerm(term)
+            resolveLiteral(term) != null ||
+                normalized.startsWith("chain.input.") ||
+                normalized.startsWith("steps.") ||
+                normalized.startsWith("chains.")
+        }
 
     private fun resolveMapping(
         source: String,
@@ -236,10 +274,10 @@ class ToolExecutionPipeline(
         val terms = mappingTerms(source)
         if (terms.size > 1) {
             return terms.joinToString("") { term ->
-                resolveLiteral(term) ?: resolveSource(term, chain, completedChains, completedSteps)
+                resolveLiteral(term) ?: resolveSource(normalizeMappingTerm(term), chain, completedChains, completedSteps)
             }
         }
-        return coerceMappedValue(target, resolveSource(source, chain, completedChains, completedSteps))
+        return coerceMappedValue(target, resolveSource(normalizeMappingTerm(source), chain, completedChains, completedSteps))
     }
 
     private fun resolveSource(
@@ -270,6 +308,17 @@ class ToolExecutionPipeline(
         if (source.startsWith("chains.")) {
             val parts = source.split(".")
             val completed = completedChains[parts.getOrNull(1)] ?: return ""
+            if (parts.getOrNull(2) == "steps") {
+                val stepId = parts.getOrNull(3) ?: return ""
+                val step = completed.steps.firstOrNull { it.id == stepId } ?: return ""
+                val selector = parts.getOrNull(4).orEmpty()
+                val value = when (selector.substringBefore("[")) {
+                    "content", "output" -> step.content
+                    "input" -> step.argumentsJson
+                    else -> ""
+                }
+                return value.valueAt(selector.indexPathPrefix() + parts.drop(5))
+            }
             val value = when (parts.getOrNull(2)) {
                 "output", "content" -> completed.steps.joinToString("\n") { it.content }
                 else -> ""
@@ -315,13 +364,12 @@ class ToolExecutionPipeline(
                     val index = key.toIntOrNull() ?: 0
                     current.values.getOrNull(index) ?: return ""
                 }
-                else -> current.asObject()?.get(key) ?: run {
-                    if (key == "id") return current.syntheticAmiiboId().orEmpty()
-                    return ""
-                }
+                else -> current.asObject()?.get(key)
+                    ?: current.syntheticValueFor(key)
+                    ?: return ""
             }
         }
-        if (path.lastOrNull() == "id") {
+        if (path.lastOrNull() == "id" || path.lastOrNull() == "amiiboId") {
             current.syntheticAmiiboId()?.let { return it }
         }
         return current.scalarString()
@@ -345,6 +393,20 @@ class ToolExecutionPipeline(
         return if (head != null && tail != null) head + tail else objectValue["id"]?.asString()
     }
 
+    private fun JsonValue.syntheticValueFor(key: String): JsonValue? =
+        when (key) {
+            "id", "amiiboId" -> syntheticAmiiboId()?.let(JsonValue::StringValue)
+            "games" -> combinedAmiiboGames()
+            else -> null
+        }
+
+    private fun JsonValue.combinedAmiiboGames(): JsonValue? {
+        val objectValue = asObject() ?: return null
+        val games = listOf("games3DS", "gamesSwitch", "gamesWiiU")
+            .flatMap { field -> objectValue[field]?.asArray().orEmpty() }
+        return games.takeIf { it.isNotEmpty() }?.let(JsonValue::ArrayValue)
+    }
+
     private fun JsonValue.scalarString(): String =
         when (this) {
             JsonValue.Null -> ""
@@ -357,11 +419,12 @@ class ToolExecutionPipeline(
 
     private fun validateMappingSources(step: PlannedToolStep, source: String, errors: MutableList<String>) {
         mappingTerms(source).forEach { term ->
+            val normalized = normalizeMappingTerm(term)
             if (
                 resolveLiteral(term) == null &&
-                !term.startsWith("chain.input.") &&
-                !term.startsWith("steps.") &&
-                !term.startsWith("chains.")
+                !normalized.startsWith("chain.input.") &&
+                !normalized.startsWith("steps.") &&
+                !normalized.startsWith("chains.")
             ) {
                 errors += "Step '${step.id}' has unsupported input mapping source '$source'"
             }
@@ -373,6 +436,12 @@ class ToolExecutionPipeline(
             .map(String::trim)
             .filter(String::isNotBlank)
             .ifEmpty { listOf(source.trim()) }
+
+    private fun normalizeMappingTerm(term: String): String {
+        val trimmed = term.trim()
+        if (!trimmed.startsWith("JSON.stringify(") || !trimmed.endsWith(")")) return trimmed
+        return trimmed.removePrefix("JSON.stringify(").dropLast(1).trim()
+    }
 
     private fun resolveLiteral(term: String): String? {
         if (term.length < 2) return null
@@ -479,7 +548,7 @@ class ToolExecutionPipeline(
                 appendLine("  - Step ${step.id} (${step.serverName}/${step.toolName}): ${if (step.success) "success" else "failed"}")
                 appendLine("    Input: ${step.argumentsJson}")
                 step.errorMessage?.let { appendLine("    Error: $it") }
-                appendLine("    Result: ${step.content.take(500)}")
+                appendLine("    Result: ${step.content}")
             }
         }
     }.trim()
@@ -532,10 +601,15 @@ object ToolExecutionPlanParser {
     private fun PlannedToolExecutionPlan.withImpliedDependencies(): PlannedToolExecutionPlan {
         val stepOwners = chains.flatMap { chain -> chain.steps.map { step -> step.id to chain.id } }.toMap()
         return copy(chains = chains.map { chain ->
+            val chainInputReferences = mappingSourcesFromInput(chain.inputJson)
             val stepReferences = chain.steps.flatMap { step ->
                 step.dependsOn + step.inputMappings.values.mapNotNull(::stepDependencyFromMapping)
             }
             val chainDependencies = chain.dependsOn +
+                chainInputReferences.mapNotNull(::chainDependencyFromMapping) +
+                chainInputReferences.mapNotNull(::stepDependencyFromMapping).mapNotNull { stepId ->
+                    stepOwners[stepId]?.takeIf { it != chain.id }
+                } +
                 chain.steps.flatMap { it.inputMappings.values }.mapNotNull(::chainDependencyFromMapping) +
                 stepReferences.mapNotNull { stepId -> stepOwners[stepId]?.takeIf { it != chain.id } }
             chain.copy(
@@ -550,9 +624,12 @@ object ToolExecutionPlanParser {
         })
     }
 
+    private fun mappingSourcesFromInput(inputJson: String): List<String> =
+        McpJson.parse(inputJson).asObject().orEmpty().values.mapNotNull { it.asString() }
+
     private fun stepDependencyFromMapping(source: String): String? =
         mappingTerms(source).firstNotNullOfOrNull { term ->
-            term.takeIf { it.startsWith("steps.") }
+            normalizeMappingTerm(term).takeIf { it.startsWith("steps.") }
             ?.split(".")
             ?.getOrNull(1)
             ?.takeIf { it.isNotBlank() }
@@ -560,7 +637,7 @@ object ToolExecutionPlanParser {
 
     private fun chainDependencyFromMapping(source: String): String? =
         mappingTerms(source).firstNotNullOfOrNull { term ->
-            term.takeIf { it.startsWith("chains.") }
+            normalizeMappingTerm(term).takeIf { it.startsWith("chains.") }
             ?.split(".")
             ?.getOrNull(1)
             ?.takeIf { it.isNotBlank() }
@@ -571,6 +648,12 @@ object ToolExecutionPlanParser {
             .map(String::trim)
             .filter(String::isNotBlank)
             .ifEmpty { listOf(source.trim()) }
+
+    private fun normalizeMappingTerm(term: String): String {
+        val trimmed = term.trim()
+        if (!trimmed.startsWith("JSON.stringify(") || !trimmed.endsWith(")")) return trimmed
+        return trimmed.removePrefix("JSON.stringify(").dropLast(1).trim()
+    }
 }
 
 private data class CompletedChain(

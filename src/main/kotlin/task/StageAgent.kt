@@ -8,10 +8,13 @@ import chat.ChatMessage
 import chat.Role
 import chat.TokenUsage
 import formatting.CliPromptMarkerNormalizer
+import mcp.JsonValue
 import mcp.McpJson
 import mcp.McpTool
 import mcp.McpToolArgumentSanitizer
+import mcp.McpToolCallResult
 import mcp.McpToolGateway
+import mcp.asArray
 import mcp.asObject
 import mcp.asString
 import swarm.PlanningSwarmStageAgent
@@ -76,7 +79,13 @@ class PromptedStageAgent(
             appendLine("""Use this exact optional shape: "toolExecutionPlan":{"chains":[{"id":"chain_id","mode":"sequential","dependsOn":[],"input":{},"steps":[{"id":"step_id","server":"serverName","tool":"toolName","arguments":{},"dependsOn":[],"inputMappings":{}}]}],"constraints":{"allowParallel":true}}""")
             appendLine("Allowed chain mode values are sequential and parallel. dependsOn values must reference earlier chain or step identifiers.")
             appendLine("inputMappings keys are argument field names. Values must be source paths such as chain.input.query, chains.chain_id.output, steps.step_id.output, or steps.step_id.content.")
+            appendLine("inputMappings may concatenate only quoted string literals and supported source paths with +. Do not use functions or wrappers such as JSON.stringify; JSON objects and arrays are passed as compact JSON text automatically.")
             appendLine("When a prior tool output is a JSON object, map specific fields with paths such as steps.step_id.output.key instead of passing the whole output.")
+            appendLine("For Amiibo-style outputs, use output.id/output.amiiboId when available or output.head + output.tail, and use output.games only when it is a documented or combined compatibility-games field.")
+            appendLine("Every chain must contain at least one concrete step. Never emit placeholder chains or empty steps arrays.")
+            appendLine("Do not plan dynamic fan-out where later steps are created after seeing earlier tool output; the executable plan is static.")
+            appendLine("When the number of follow-up items is unknown until a prior tool returns, use one downstream tool call that accepts a natural-language or text input, and map the prior output into that argument.")
+            appendLine("Never create a tool step whose required search/query/id argument can resolve to an empty string. If a value is unknown, map a prior tool output into it or choose a different downstream tool.")
             appendLine("If no ordered tool pipeline is needed, omit toolExecutionPlan.")
         }
         appendLine("The output field must be readable text for the user or next stage, not escaped diagnostic context.")
@@ -292,6 +301,13 @@ class DefaultStageAgentFactory(
             Treat each inputSchema as a strict contract: required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints must be satisfied exactly.
             If multiple MCP calls must happen in a strict order, include toolExecutionPlan in the top-level JSON response.
             In toolExecutionPlan, model ordered work as chains with explicit ids, mode values, dependsOn arrays, step ids, tool names, JSON arguments, and inputMappings.
+            Every chain must contain at least one concrete step. Never emit placeholder chains or empty steps arrays.
+            Do not plan dynamic fan-out where later steps are created after seeing earlier tool output; the executable plan is static and cannot add steps at runtime.
+            When a prior tool reveals an unknown-length list and the next task must process every item, use one downstream tool that accepts a natural-language/text argument and map the prior output into that argument.
+            Example: after an AmiiboAPI game_info step returns compatible games, call rawg/ask_pipeworx once with inputMappings like {"question":"'Describe each game in this compatibility JSON: ' + steps.get_games.output"}.
+            inputMappings may contain only quoted string literals and source paths joined by +. Do not use functions or wrappers such as JSON.stringify; JSON outputs are converted to compact JSON text by the pipeline.
+            For Amiibo-style ids, map output.id/output.amiiboId when available or concatenate output.head + output.tail. For compatible games, map the exact documented games field or output.games when the gateway exposes a combined games field.
+            Never create a tool step whose required search/query/id argument can resolve to an empty string; an empty query is an invalid plan.
             Use sequential chains when a later tool needs earlier output. Use parallel chains only when steps are independent or their dependencies are explicit.
             Put data handoff rules in inputMappings; do not hide dependencies in prose.
             If a tool output is JSON and a later tool needs one field, map that exact field path, for example steps.search_series.output.key.
@@ -366,35 +382,30 @@ class DeepSeekStageChatClient(
         val firstContent = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val firstUsage = JsonTools.extractUsage(response.body())
-        val toolCall = parseMcpToolCall(firstContent)
-        if (toolCall == null || mcpToolGateway == null) {
+        val toolCalls = parseMcpToolCalls(firstContent)
+        if (toolCalls.isEmpty() || mcpToolGateway == null) {
             ResponseLimitClassifier.classify(JsonTools.extractFinishReason(response.body()), settings, firstUsage)
             return StageChatResponse(firstContent, firstUsage, JsonTools.extractFinishReason(response.body()))
         }
 
         val events = mutableListOf<String>()
-        val toolResult = try {
-            val argumentsJson = sanitizedMcpArguments(toolCall)
-            events += mcpToolStartedEvent(toolCall.serverName, toolCall.toolName, argumentsJson)
-            mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
-        } catch (exception: RuntimeException) {
-            val message = exception.message ?: "Could not call MCP tool."
-            events += mcpToolFailedEvent(toolCall.serverName, toolCall.toolName, message)
-            throw AgentException("MCP tool ${toolCall.serverName}/${toolCall.toolName} failed: $message", exception)
+        val toolResults = toolCalls.map { toolCall ->
+            try {
+                val argumentsJson = sanitizedMcpArguments(toolCall)
+                events += mcpToolStartedEvent(toolCall.serverName, toolCall.toolName, argumentsJson)
+                mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
+            } catch (exception: RuntimeException) {
+                val message = exception.message ?: "Could not call MCP tool."
+                events += mcpToolFailedEvent(toolCall.serverName, toolCall.toolName, message)
+                throw AgentException("MCP tool ${toolCall.serverName}/${toolCall.toolName} failed: $message", exception)
+            }.also { result ->
+                events += mcpToolCompletedEvent(result.serverName, result.toolName, result.content, result.isError)
+            }
         }
-        events += mcpToolCompletedEvent(toolResult.serverName, toolResult.toolName, toolResult.content, toolResult.isError)
         val finalResponse = sendRequest(
             requestMessages + listOf(
                 ChatMessage(Role.ASSISTANT, firstContent),
-                ChatMessage(
-                    Role.USER,
-                    """
-                    MCP tool result for ${toolResult.serverName}/${toolResult.toolName}:
-                    ${toolResult.content}
-
-                    Continue the current stage using this tool result. Return ONLY the valid JSON required by the stage contract. Do not request another MCP tool call.
-                    """.trimIndent()
-                )
+                ChatMessage(Role.USER, mcpToolResultsPrompt(toolResults))
             )
         )
         val content = JsonTools.extractAssistantContent(finalResponse.body())
@@ -455,8 +466,10 @@ class DeepSeekStageChatClient(
                 Role.SYSTEM,
                 """
                 MCP tools are available. Use them when they can help complete the current stage.
-                To request exactly one MCP tool call, respond only with compact JSON in this form:
+                To request one MCP tool call, respond only with compact JSON in this form:
                 {"mcpToolCall":{"server":"serverName","tool":"toolName","arguments":{}}}
+                To request multiple independent MCP tool calls, respond only with compact JSON in this form:
+                {"mcpToolCalls":[{"server":"serverName","tool":"toolName","arguments":{}}]}
                 Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, arguments must be {}.
                 Treat each inputSchema as a strict contract. Satisfy required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints exactly.
                 Available MCP tools:
@@ -478,9 +491,16 @@ class DeepSeekStageChatClient(
         return McpToolArgumentSanitizer.sanitize(toolCall.argumentsJson, tool)
     }
 
-    private fun parseMcpToolCall(content: String): McpRequestedToolCall? {
-        val root = runCatching { McpJson.parse(content.trim().withoutMarkdownFence()).asObject() }.getOrNull() ?: return null
-        val call = root["mcpToolCall"]?.asObject() ?: return null
+    private fun parseMcpToolCalls(content: String): List<McpRequestedToolCall> {
+        val root = runCatching { McpJson.parse(content.trim().withoutMarkdownFence()).asObject() }.getOrNull() ?: return emptyList()
+        val multiple = root["mcpToolCalls"]?.asArray().orEmpty()
+            .mapNotNull { value -> parseMcpToolCall(value.asObject()) }
+        if (multiple.isNotEmpty()) return multiple
+        return listOfNotNull(parseMcpToolCall(root["mcpToolCall"]?.asObject()))
+    }
+
+    private fun parseMcpToolCall(call: Map<String, JsonValue>?): McpRequestedToolCall? {
+        call ?: return null
         val server = call["server"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
         val tool = call["tool"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
         val arguments = call["arguments"] ?: return null
@@ -506,4 +526,15 @@ class DeepSeekStageChatClient(
         val toolName: String,
         val argumentsJson: String
     )
+
+    private fun mcpToolResultsPrompt(toolResults: List<McpToolCallResult>): String = buildString {
+        appendLine("MCP tool results:")
+        toolResults.forEach { result ->
+            appendLine()
+            appendLine("MCP tool result for ${result.serverName}/${result.toolName}${if (result.isError) " (error)" else ""}:")
+            appendLine(result.content)
+        }
+        appendLine()
+        appendLine("Continue the current stage using these tool results. Return ONLY the valid JSON required by the stage contract. Do not request another MCP tool call.")
+    }.trim()
 }

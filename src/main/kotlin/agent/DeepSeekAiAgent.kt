@@ -6,9 +6,12 @@ import chat.ContextStrategy
 import chat.Role
 import invariants.InvariantRepository
 import memory.MemoryRepository
+import mcp.JsonValue
 import mcp.McpJson
+import mcp.McpToolCallResult
 import mcp.McpToolArgumentSanitizer
 import mcp.McpToolGateway
+import mcp.asArray
 import mcp.asObject
 import mcp.asString
 import java.io.IOException
@@ -62,33 +65,27 @@ class DeepSeekAiAgent(
         val firstAnswer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
         val firstUsage = JsonTools.extractUsage(response.body())
-        val toolCall = parseMcpToolCall(firstAnswer)
-        val finalResponse = if (toolCall == null || mcpToolGateway == null) {
+        val toolCalls = parseMcpToolCalls(firstAnswer)
+        val finalResponse = if (toolCalls.isEmpty() || mcpToolGateway == null) {
             response
         } else {
-            val toolResult = try {
-                val argumentsJson = sanitizedMcpArguments(toolCall)
-                summaryEvents.onMcpToolCallStarted(toolCall.serverName, toolCall.toolName, argumentsJson)
-                mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
-            } catch (exception: RuntimeException) {
-                val message = exception.message ?: "Could not call MCP tool."
-                summaryEvents.onMcpToolCallFailed(toolCall.serverName, toolCall.toolName, message)
-                throw AgentException("MCP tool ${toolCall.serverName}/${toolCall.toolName} failed: $message", exception)
+            val toolResults = toolCalls.map { toolCall ->
+                try {
+                    val argumentsJson = sanitizedMcpArguments(toolCall)
+                    summaryEvents.onMcpToolCallStarted(toolCall.serverName, toolCall.toolName, argumentsJson)
+                    mcpToolGateway.callTool(toolCall.serverName, toolCall.toolName, argumentsJson)
+                        .also(summaryEvents::onMcpToolCallCompleted)
+                } catch (exception: RuntimeException) {
+                    val message = exception.message ?: "Could not call MCP tool."
+                    summaryEvents.onMcpToolCallFailed(toolCall.serverName, toolCall.toolName, message)
+                    throw AgentException("MCP tool ${toolCall.serverName}/${toolCall.toolName} failed: $message", exception)
+                }
             }
-            summaryEvents.onMcpToolCallCompleted(toolResult)
             sendRequest(
                 buildRequest(
                     requestContext + listOf(
                         ChatMessage(Role.ASSISTANT, firstAnswer),
-                        ChatMessage(
-                            Role.USER,
-                            """
-                            MCP tool result for ${toolResult.serverName}/${toolResult.toolName}:
-                            ${toolResult.content}
-
-                            Use this tool result to answer the user's original request. Do not request another MCP tool call.
-                            """.trimIndent()
-                        )
+                        ChatMessage(Role.USER, mcpToolResultsPrompt(toolResults))
                     ),
                     settings
                 )
@@ -181,8 +178,10 @@ class DeepSeekAiAgent(
                 Role.SYSTEM,
                 """
                 MCP tools are available. Use them when they can answer the user's request better than guessing.
-                To request exactly one MCP tool call, respond only with compact JSON in this form:
+                To request one MCP tool call, respond only with compact JSON in this form:
                 {"mcpToolCall":{"server":"serverName","tool":"toolName","arguments":{}}}
+                To request multiple independent MCP tool calls, respond only with compact JSON in this form:
+                {"mcpToolCalls":[{"server":"serverName","tool":"toolName","arguments":{}}]}
                 Treat each inputSchema as a strict contract. Use only declared properties and satisfy required fields, JSON types, minLength, maxLength, pattern, minimum, and maximum constraints exactly.
                 Available MCP tools:
                 $toolList
@@ -191,10 +190,17 @@ class DeepSeekAiAgent(
         )
     }
 
-    private fun parseMcpToolCall(content: String): McpRequestedToolCall? {
+    private fun parseMcpToolCalls(content: String): List<McpRequestedToolCall> {
         val trimmed = content.trim().withoutMarkdownFence()
-        val root = runCatching { McpJson.parse(trimmed).asObject() }.getOrNull() ?: return null
-        val call = root["mcpToolCall"]?.asObject() ?: return null
+        val root = runCatching { McpJson.parse(trimmed).asObject() }.getOrNull() ?: return emptyList()
+        val multiple = root["mcpToolCalls"]?.asArray().orEmpty()
+            .mapNotNull { value -> parseMcpToolCall(value.asObject()) }
+        if (multiple.isNotEmpty()) return multiple
+        return listOfNotNull(parseMcpToolCall(root["mcpToolCall"]?.asObject()))
+    }
+
+    private fun parseMcpToolCall(call: Map<String, JsonValue>?): McpRequestedToolCall? {
+        call ?: return null
         val server = call["server"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
         val tool = call["tool"]?.asString()?.takeIf { it.isNotBlank() } ?: return null
         val arguments = call["arguments"] ?: return null
@@ -215,6 +221,17 @@ class DeepSeekAiAgent(
         val toolName: String,
         val argumentsJson: String
     )
+
+    private fun mcpToolResultsPrompt(toolResults: List<McpToolCallResult>): String = buildString {
+        appendLine("MCP tool results:")
+        toolResults.forEach { result ->
+            appendLine()
+            appendLine("MCP tool result for ${result.serverName}/${result.toolName}${if (result.isError) " (error)" else ""}:")
+            appendLine(result.content)
+        }
+        appendLine()
+        appendLine("Use these tool results to answer the user's original request. Do not request another MCP tool call.")
+    }.trim()
 
     private fun String.withoutMarkdownFence(): String {
         if (!startsWith("```")) return this

@@ -55,6 +55,41 @@ class DeepSeekStageChatClientMcpTest {
         assertContains(httpClient.requestBodies[1], "MCP tool result for amiibo/search_amiibo")
     }
 
+    @Test
+    fun `stage client executes multiple requested mcp tool calls`() {
+        val httpClient = RecordingHttpClient(
+            listOf(
+                assistantResponse(
+                    """
+                    {"mcpToolCalls":[
+                      {"server":"amiibo","tool":"search_amiibo","arguments":{"name":"Mario"}},
+                      {"server":"files","tool":"read_file","arguments":{"path":"README.md"}}
+                    ]}
+                    """.trimIndent()
+                ),
+                assistantResponse("""{"success":true,"summary":"done","output":"Combined result","issues":[],"requestedChanges":[],"retryReason":null}""")
+            )
+        )
+        val gateway = RecordingMcpGateway()
+        val client = DeepSeekStageChatClient(
+            settings = AgentSettings(apiKey = "key", summaryInterval = 0, systemPrompt = "system"),
+            mcpToolGateway = gateway,
+            httpClient = httpClient
+        )
+
+        val response = client.send(listOf(ChatMessage(Role.USER, "Use several MCP sources")))
+
+        assertContains(response.content, "Combined result")
+        assertEquals(
+            listOf("amiibo/search_amiibo", "files/read_file"),
+            gateway.calls.map { "${it.first}/${it.second}" }
+        )
+        assertTrueEvent(response.events, "Calling MCP tool amiibo/search_amiibo")
+        assertTrueEvent(response.events, "Calling MCP tool files/read_file")
+        assertContains(httpClient.requestBodies[1], "MCP tool result for amiibo/search_amiibo")
+        assertContains(httpClient.requestBodies[1], "MCP tool result for files/read_file")
+    }
+
     private fun assertTrueEvent(events: List<String>, text: String) {
         kotlin.test.assertTrue(events.any { it.contains(text) }, "Expected event containing: $text")
     }
@@ -66,11 +101,14 @@ class DeepSeekStageChatClientMcpTest {
         val calls = mutableListOf<Triple<String, String, String>>()
 
         override fun availableTools(): List<McpTool> =
-            listOf(McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}}}"))
+            listOf(
+                McpTool("amiibo", "search_amiibo", "Search amiibo", "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}}}"),
+                McpTool("files", "read_file", "Read file", "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}")
+            )
 
         override fun callTool(serverName: String, toolName: String, argumentsJson: String): McpToolCallResult {
             calls += Triple(serverName, toolName, argumentsJson)
-            return McpToolCallResult(serverName, toolName, "tool-output")
+            return McpToolCallResult(serverName, toolName, "$serverName/$toolName tool-output")
         }
     }
 
