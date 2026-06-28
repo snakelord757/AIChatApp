@@ -163,3 +163,13 @@
   - Исправлены регрессии тестов после добавления tool execution pipeline: history renderer снова может рендерить stored EVENT подробно в unit tests, а startup UI схлопывает старые task/tool events только в стандартном запуске приложения.
   - `TaskStateStore.read()` снова выполняет обычное чтение сохраненного состояния, а filtering terminal/stale MCP states вынесен в `readResumable()` для старта orchestrator.
   - Повторные validation failures снова переводят задачу в PAUSED, сохраняя совместимость pause/resume и planning swarm resume.
+
+### Fix strict MCP tool execution contracts
+
+- Дата выполнения: 2026-06-28
+- Актуальный хэш: a9debfaa4429e6e9bff962a2dbf0deab8c2a2f1c
+- Саммари:
+  - Добавлена поддержка множественных MCP tool calls в основном агенте и stage-клиенте с передачей всех результатов обратно в модель одним follow-up контекстом.
+  - Усилены planning-инструкции для строгого соблюдения inputSchema и синтаксиса `toolExecutionPlan.inputMappings`.
+  - Доработан ordered tool execution pipeline: chain input mappings, nested cross-chain step outputs, защита от пустых resolved аргументов, полные tool results в execution context, алиасы Amiibo `amiiboId`/`games` и совместимость с ошибочным `JSON.stringify(...)` вокруг source path.
+  - Добавлены regression tests для нескольких MCP calls, более чем двух MCP серверов и реального amiibo-плана из истории чата.
