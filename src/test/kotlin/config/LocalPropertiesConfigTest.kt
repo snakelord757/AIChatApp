@@ -18,9 +18,9 @@ class LocalPropertiesConfigTest {
             Files.writeString(
                 path,
                 """
-                DEEPSEEK_API_KEY=test-key
-                DEEPSEEK_BASE_URL=https://api.deepseek.com
-                DEEPSEEK_MODEL=deepseek-v4-flash
+                MODEL_API_KEY=test-key
+                MODEL_BASE_URL=http://localhost:11434/v1
+                MODEL_NAME=llama3.1
                 AI_CHAT_SUMMARY_INTERVAL=0
                 AI_CHAT_CONTEXT_STRATEGY=facts
                 AI_CHAT_CONTEXT_WINDOW_MESSAGES=9
@@ -33,6 +33,8 @@ class LocalPropertiesConfigTest {
             assertEquals(0, success.settings.summaryInterval)
             assertEquals(ContextStrategy.STICKY_FACTS, success.settings.contextStrategy)
             assertEquals(9, success.settings.contextWindowMessages)
+            assertEquals("llama3.1", success.settings.model)
+            assertEquals(listOf("llama3.1"), success.settings.availableModels)
             assertEquals(false, success.settings.allowClarifyingQuestions)
             assertEquals(false, success.settings.planningSwarmEnabled)
         } finally {
@@ -53,7 +55,8 @@ class LocalPropertiesConfigTest {
             Files.writeString(
                 path,
                 """
-                DEEPSEEK_API_KEY=test-key
+                MODEL_BASE_URL=http://localhost:11434/v1
+                MODEL_NAME=llama3.1
                 AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=true
                 """.trimIndent(),
                 StandardCharsets.UTF_8
@@ -80,7 +83,8 @@ class LocalPropertiesConfigTest {
             Files.writeString(
                 path,
                 """
-                DEEPSEEK_API_KEY=test-key
+                MODEL_BASE_URL=http://localhost:11434/v1
+                MODEL_NAME=llama3.1
                 AI_CHAT_PLANNING_SWARM_ENABLED=true
                 """.trimIndent(),
                 StandardCharsets.UTF_8

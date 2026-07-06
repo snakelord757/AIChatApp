@@ -32,11 +32,11 @@ class MockAiAgent(
         val answer = """
             ## Demo response
 
-            The app is running without a real DeepSeek key.
+            The app is running without configured model provider settings.
 
             You wrote: `$userMessage`
 
-            Add `DEEPSEEK_API_KEY` to `local.properties` to receive real answers from `${settings.model}`.
+            Add `MODEL_BASE_URL` and `MODEL_NAME` to `local.properties` to receive real answers from `${settings.model}`.
         """.trimIndent()
         historyRepository.addAssistant(answer)
         return AgentResponse(answer)

@@ -48,7 +48,7 @@ class SettingsScreen(
     private fun renderHelp() {
         println("Settings commands:")
         println("show - show current settings")
-        println("set model <deepseek-v4-flash|deepseek-v4-pro> - change the model")
+        println("set model <model-name> - change the model")
         println("set thinking <on|off> - enable or disable thinking mode")
         println("set temperature <0..2> - change the temperature")
         println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
@@ -65,7 +65,17 @@ class SettingsScreen(
         return when (rawKey.lowercase()) {
             "model" -> {
                 val model = value.trim()
-                if (model !in AgentSettings.supportedModels) invalid(settings) else settings.copy(model = model)
+                if (model !in settings.availableModels) {
+                    val hint = if (settings.availableModels.isEmpty()) {
+                        "Run /models to load models from the provider first."
+                    } else {
+                        "Available models: ${settings.availableModels.joinToString(", ")}"
+                    }
+                    renderer.renderError("Unknown model. $hint")
+                    settings
+                } else {
+                    settings.copy(model = model)
+                }
             }
             "thinking", "thinkingmode" -> {
                 when (value.trim().lowercase()) {

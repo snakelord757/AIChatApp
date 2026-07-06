@@ -5,21 +5,28 @@ import chat.ChatMessage
 import chat.Role
 import invariants.InvariantRepository
 import memory.MemoryRepository
-import task.DeepSeekStageChatClient
+import task.ModelProviderStageChatClient
 import task.StageChatClient
 
 interface ScheduledTaskSummaryAgent {
     fun summarize(tasks: List<ScheduledTask>): String
 }
 
-class DeepSeekScheduledTaskSummaryAgent(
+class ModelProviderScheduledTaskSummaryAgent(
     private val settingsProvider: () -> AgentSettings,
     private val memoryRepository: MemoryRepository?,
     private val invariantRepository: InvariantRepository?
 ) : ScheduledTaskSummaryAgent {
     override fun summarize(tasks: List<ScheduledTask>): String =
-        SummaryClient(DeepSeekStageChatClient(settingsProvider())).summarize(tasks, memoryRepository, invariantRepository)
+        SummaryClient(
+            ModelProviderStageChatClient(
+                settings = settingsProvider(),
+                structuredStageResponse = false
+            )
+        ).summarize(tasks, memoryRepository, invariantRepository)
 }
+
+typealias DeepSeekScheduledTaskSummaryAgent = ModelProviderScheduledTaskSummaryAgent
 
 class DemoScheduledTaskSummaryAgent : ScheduledTaskSummaryAgent {
     override fun summarize(tasks: List<ScheduledTask>): String {

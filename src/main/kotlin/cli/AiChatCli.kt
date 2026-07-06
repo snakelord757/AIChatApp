@@ -1,6 +1,7 @@
 package cli
 
-import agent.DeepSeekAiAgent
+import agent.ModelProviderAiAgent
+import agent.ModelCatalogClient
 import agent.MockAiAgent
 import chat.ChatHistoryBusyException
 import chat.ChatHistoryRepository
@@ -16,13 +17,13 @@ import memory.MemoryStore
 import mcp.McpServerStore
 import mcp.ProcessMcpClient
 import mcp.StoredMcpToolGateway
-import scheduled.DeepSeekScheduleParsingAgent
-import scheduled.DeepSeekScheduledTaskSummaryAgent
+import scheduled.ModelProviderScheduleParsingAgent
+import scheduled.ModelProviderScheduledTaskSummaryAgent
 import scheduled.DemoScheduleParsingAgent
 import scheduled.DemoScheduledTaskSummaryAgent
 import scheduled.ScheduledTaskManager
 import scheduled.ScheduledTaskStore
-import task.DeepSeekStageChatClient
+import task.ModelProviderStageChatClient
 import task.DefaultStageAgentFactory
 import task.StageChatClient
 import task.StageChatResponse
@@ -85,6 +86,7 @@ object AiChatCli {
         try {
             val restoredState = historyStore.readState()
             val restoredMessages = restoredState.messages
+            val catalogClient = ModelCatalogClient()
             val settings = when (configResult) {
                 is LocalPropertiesConfig.Result.Success -> configResult.settings
                 is LocalPropertiesConfig.Result.Failure -> configResult.fallbackSettings
@@ -116,16 +118,16 @@ object AiChatCli {
             invariantRepository.ensureInitialized()
 
             val agent = when (configResult) {
-                is LocalPropertiesConfig.Result.Success -> DeepSeekAiAgent(
+                is LocalPropertiesConfig.Result.Success -> ModelProviderAiAgent(
                     historyRepository = historyRepository,
-                    initialSettings = configResult.settings,
+                    initialSettings = settings,
                     invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository,
                     mcpToolGateway = mcpToolGateway
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
                     renderer.renderError(configResult.message)
-                    renderer.renderSystem("No real key was found, so local demo mode is running without calling DeepSeek.")
+                    renderer.renderSystem("Model provider settings were not found, so local demo mode is running without external model calls.")
                     MockAiAgent(
                         historyRepository = historyRepository,
                         initialSettings = configResult.fallbackSettings,
@@ -136,22 +138,29 @@ object AiChatCli {
             }
             val stageClientFactory = {
                 when (configResult) {
-                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(settingsRef.get())
+                    is LocalPropertiesConfig.Result.Success -> ModelProviderStageChatClient(
+                        settings = settingsRef.get(),
+                        structuredStageResponse = true
+                    )
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
                 }
             }
             val stageAwareClientFactory = { stage: TaskStage ->
                 when (configResult) {
-                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(
+                    is LocalPropertiesConfig.Result.Success -> ModelProviderStageChatClient(
                         settings = settingsRef.get(),
-                        mcpToolGateway = if (stage == TaskStage.EXECUTION) mcpToolGateway else null
+                        mcpToolGateway = if (stage == TaskStage.EXECUTION) mcpToolGateway else null,
+                        structuredStageResponse = true
                     )
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient()
                 }
             }
             val swarmStageClientFactory = { role: swarm.SwarmRole ->
                 when (configResult) {
-                    is LocalPropertiesConfig.Result.Success -> DeepSeekStageChatClient(settingsRef.get().copy(temperature = role.temperature))
+                    is LocalPropertiesConfig.Result.Success -> ModelProviderStageChatClient(
+                        settings = settingsRef.get().copy(temperature = role.temperature),
+                        structuredStageResponse = false
+                    )
                     is LocalPropertiesConfig.Result.Failure -> DemoStageChatClient(role.displayName)
                 }
             }
@@ -201,11 +210,11 @@ object AiChatCli {
                 }
             )
             val scheduleParsingAgent = when (configResult) {
-                is LocalPropertiesConfig.Result.Success -> DeepSeekScheduleParsingAgent { settingsRef.get() }
+                is LocalPropertiesConfig.Result.Success -> ModelProviderScheduleParsingAgent { settingsRef.get() }
                 is LocalPropertiesConfig.Result.Failure -> DemoScheduleParsingAgent()
             }
             val scheduledTaskSummaryAgent = when (configResult) {
-                is LocalPropertiesConfig.Result.Success -> DeepSeekScheduledTaskSummaryAgent(
+                is LocalPropertiesConfig.Result.Success -> ModelProviderScheduledTaskSummaryAgent(
                     settingsProvider = { settingsRef.get() },
                     memoryRepository = memoryRepository,
                     invariantRepository = invariantRepository
@@ -229,7 +238,8 @@ object AiChatCli {
                 mcpClient = mcpClient,
                 scheduledTaskManager = scheduledTaskManager,
                 scheduleParsingAgent = scheduleParsingAgent,
-                scheduledTaskSummaryAgent = scheduledTaskSummaryAgent
+                scheduledTaskSummaryAgent = scheduledTaskSummaryAgent,
+                modelCatalogClient = if (configResult is LocalPropertiesConfig.Result.Success) catalogClient else null
             ).run()
         } finally {
             historyStore.close()
@@ -274,7 +284,7 @@ private fun printHelp(out: java.io.PrintStream = System.out) {
           -h, --help    Show this help message.
           -V, --version Show the CLI version.
 
-        In chat mode, use /help, /settings, /mcp, /task, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
+        In chat mode, use /help, /settings, /models, /mcp, /task, /summary, /facts, /memory, /edit invariants, /pause, /resume, /clear, or /exit inside the session.
         """.trimIndent()
     )
 }
@@ -300,9 +310,9 @@ private class DemoStageChatClient(
         }
         val output = when (stage) {
             TaskStage.PLANNING -> "Demo plan: understand the request, execute it, validate the result, then summarize the outcome."
-            TaskStage.EXECUTION -> "Demo execution completed. Add a real DEEPSEEK_API_KEY to local.properties for model-backed execution."
+            TaskStage.EXECUTION -> "Demo execution completed. Add MODEL_BASE_URL and MODEL_NAME to local.properties for model-backed execution."
             TaskStage.VALIDATION -> "Demo validation passed."
-            TaskStage.COMPLETION -> "Demo task completed. Add DEEPSEEK_API_KEY to local.properties to receive real staged answers."
+            TaskStage.COMPLETION -> "Demo task completed. Add model provider settings to local.properties to receive real staged answers."
         }
         return StageChatResponse(
             """

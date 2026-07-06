@@ -51,8 +51,26 @@ class DeepSeekStageChatClientMcpTest {
         assertContains(gateway.calls.single().third, "\"name\":\"Mario\"")
         assertTrueEvent(response.events, "Calling MCP tool amiibo/search_amiibo")
         assertTrueEvent(response.events, "MCP tool amiibo/search_amiibo completed")
+        assertContains(httpClient.requestBodies.first(), "\"response_format\"")
+        assertContains(httpClient.requestBodies.first(), "\"type\": \"json_schema\"")
         assertContains(httpClient.requestBodies.first(), "MCP tools are available")
         assertContains(httpClient.requestBodies[1], "MCP tool result for amiibo/search_amiibo")
+    }
+
+    @Test
+    fun `stage client can omit structured response format for non stage helper calls`() {
+        val httpClient = RecordingHttpClient(
+            listOf(assistantResponse("""{"task":"Summarize","interval":{"time":1,"timeUnit":"HOURS"}}"""))
+        )
+        val client = DeepSeekStageChatClient(
+            settings = AgentSettings(apiKey = "key", summaryInterval = 0, systemPrompt = "system"),
+            structuredStageResponse = false,
+            httpClient = httpClient
+        )
+
+        client.send(listOf(ChatMessage(Role.USER, "Parse schedule")))
+
+        kotlin.test.assertFalse(httpClient.requestBodies.single().contains("\"response_format\""))
     }
 
     @Test

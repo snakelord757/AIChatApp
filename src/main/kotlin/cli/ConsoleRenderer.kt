@@ -25,7 +25,7 @@ class ConsoleRenderer(
 
     fun renderGreeting() {
         prepareOutput()
-        println(Ansi.style("AIChatApp: DeepSeek CLI chat", Ansi.BOLD, Ansi.CYAN))
+        println(Ansi.style("AIChatApp: model CLI chat", Ansi.BOLD, Ansi.CYAN))
         println("Enter a message or command. Available commands:")
         renderHelp()
     }
@@ -34,6 +34,7 @@ class ConsoleRenderer(
         prepareOutput()
         println("${Ansi.style("/help", Ansi.CYAN)} - show help")
         println("${Ansi.style("/settings", Ansi.CYAN)} - open settings")
+        println("${Ansi.style("/models", Ansi.CYAN)} - reload and show available models")
         println("${Ansi.style("/mcp", Ansi.CYAN)} - connect MCP servers and list tools")
         println("${Ansi.style("/summary", Ansi.CYAN)} - show token usage and cost for the full chat history")
         println("${Ansi.style("/facts", Ansi.CYAN)} - show sticky facts memory")
@@ -183,6 +184,7 @@ class ConsoleRenderer(
         prepareOutput()
         println(Ansi.style("Agent Settings", Ansi.BOLD, Ansi.CYAN))
         println("Model: ${settings.model}")
+        println("Available models: ${settings.availableModels.joinToString(", ")}")
         println("Thinking mode: ${if (settings.thinkingMode) "enabled" else "disabled"}")
         println("Temperature: ${settings.temperature}")
         println("Max tokens: ${if (settings.maxTokens > 0) settings.maxTokens else "unlimited"}")
@@ -192,6 +194,21 @@ class ConsoleRenderer(
         println("Planning swarm: ${if (settings.planningSwarmEnabled) "enabled" else "disabled"}")
         println("Base URL: ${settings.baseUrl}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
+    }
+
+    fun renderModels(selectedModel: String, models: List<String>) {
+        prepareOutput()
+        println()
+        println(Ansi.style("Available Models", Ansi.BOLD, Ansi.CYAN))
+        if (models.isEmpty()) {
+            println("No models found.")
+        } else {
+            models.forEach { model ->
+                val marker = if (model == selectedModel) "*" else " "
+                println("$marker $model")
+            }
+        }
+        println()
     }
 
     fun renderMcpServers(servers: List<McpServerStatus>) {

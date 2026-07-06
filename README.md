@@ -1,25 +1,27 @@
 # AIChatApp
 
-AIChatApp is a Kotlin/JVM command-line chat client for the DeepSeek API. It can run as a JVM CLI during development and can also be built as a standalone native executable with GraalVM Native Image.
+AIChatApp is a Kotlin/JVM command-line chat client for OpenAI-compatible model APIs, including local model servers. It can run as a JVM CLI during development and can also be built as a standalone native executable with GraalVM Native Image.
 
 ## Configuration
 
 Create `local.properties` in the project root:
 
 ```properties
-DEEPSEEK_API_KEY=your_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-DEEPSEEK_TOKEN_PRICE_PER_1M_USD=0.28
+MODEL_BASE_URL=http://localhost:11434/v1
+MODEL_NAME=
+MODEL_API_KEY=
+MODEL_TOKEN_PRICE_PER_1M_USD=
 AI_CHAT_SUMMARY_INTERVAL=20
 AI_CHAT_CONTEXT_STRATEGY=sliding
 AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
 AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=false
 ```
 
+`MODEL_API_KEY` is optional for local providers that do not require authentication. Available models are loaded from the provider's OpenAI-compatible `GET /models` endpoint each time `/models` is executed; use `/settings` and `set model <model-name>` to switch models without editing API keys.
+
 `local.properties` is ignored by Git. Do not commit real API keys.
 
-If the file or API key is missing, the app starts in the existing local demonstration mode.
+If the file or model provider settings are missing, the app starts in the existing local demonstration mode.
 
 ## CLI Usage
 
@@ -47,7 +49,7 @@ You can also start chat explicitly:
 .\gradlew.bat run --args="chat"
 ```
 
-Inside chat mode, the available commands are `/help`, `/settings`, `/mcp`, `/tool <serverName> <toolName> <jsonArguments>`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
+Inside chat mode, the available commands are `/help`, `/settings`, `/models`, `/mcp`, `/tool <serverName> <toolName> <jsonArguments>`, `/summary`, `/facts`, `/memory`, `/edit invariants`, `/pause`, `/resume`, `/checkpoint`, `/branch create <name>`, `/branch list`, `/branch switch <name>`, `/clear`, and `/exit`.
 
 Use `/pause` to mark the active task as paused. If a model request is already in flight, the CLI records a pause flag and does not start the next task stage after the current request returns. When input ends or the CLI closes while a task is active, the task state is also saved as paused so the next run can show that it was interrupted.
 
@@ -123,7 +125,7 @@ The same explicit tool call is also available directly from chat:
 /tool amiibo search_amiibo {"name":"Mario","limit":3}
 ```
 
-In normal chat, the real DeepSeek agent can also use configured MCP tools implicitly. AIChatApp adds the available MCP tools to the system context; when the model needs one, it must respond with:
+In normal chat, the configured model provider can also use MCP tools implicitly. AIChatApp adds the available MCP tools to the system context; when the model needs one, it must respond with:
 
 ```json
 {"mcpToolCall":{"server":"amiibo","tool":"search_amiibo","arguments":{"name":"Mario","limit":3}}}
@@ -186,6 +188,8 @@ Stage agents keep their own message history. Their private stage history is not 
 
 Each stage returns a structured `StageResult` with the stage, success flag, summary, output, issues, requested changes or retry reason, and token usage when available. The orchestrator passes each result to the next legal stage and writes the final completion output into the public chat history.
 
+For OpenAI-compatible providers that support structured output, stage requests include `response_format` with a JSON Schema for the required stage result or MCP tool-call wrapper. The app still validates the returned JSON locally and retries once if the model ignores the stage contract. Normal chat requests are not forced into JSON.
+
 The latest task lifecycle is stored next to `chat-history.json` as `task-state.json`. Lifecycle status is separate from task stage and can be `ACTIVE`, `PAUSED`, `DONE`, or `FAILED`.
 
 When validation repeatedly fails, the task is paused instead of cycling forever between `EXECUTION` and `VALIDATION`. The pause reason is saved in `task-state.json`, and the user can provide missing details with `/resume <details>`.
@@ -219,7 +223,7 @@ Memory files are always active and do not have `local.properties` settings:
 The three memory types are:
 
 - Permanent memory: global Markdown instructions and constraints. It is read as a system block and is never changed automatically by the model.
-- Personal memory: durable user communication and workflow preferences. The real DeepSeek agent updates it with an internal extraction request, and the app also reinforces local frequency signals such as repeated Python/Kotlin/code-language requests or detailed-explanation requests. Demo mode uses the same local signal reinforcement without real API calls.
+- Personal memory: durable user communication and workflow preferences. The configured model provider updates it with an internal extraction request, and the app also reinforces local frequency signals such as repeated Python/Kotlin/code-language requests or detailed-explanation requests. Demo mode uses the same local signal reinforcement without real API calls.
 - Working memory: branch-specific task state with `Status: PENDING`, `Status: PAUSED`, or `Status: DONE`. The status is changed locally before and after assistant requests or `/pause`, without using the model.
 
 Personal memory items are stored as weighted constraints:

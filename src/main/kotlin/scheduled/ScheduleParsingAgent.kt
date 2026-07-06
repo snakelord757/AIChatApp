@@ -77,10 +77,17 @@ interface ScheduleParsingAgentClient {
     fun parse(request: String): ParsedScheduleRequest
 }
 
-class DeepSeekScheduleParsingAgent(
+class ModelProviderScheduleParsingAgent(
     settingsProvider: () -> AgentSettings
 ) : ScheduleParsingAgentClient {
-    private val agent = ScheduleParsingAgent { task.DeepSeekStageChatClient(settingsProvider()) }
+    private val agent = ScheduleParsingAgent {
+        task.ModelProviderStageChatClient(
+            settings = settingsProvider(),
+            structuredStageResponse = false
+        )
+    }
 
     override fun parse(request: String): ParsedScheduleRequest = agent.parse(request)
 }
+
+typealias DeepSeekScheduleParsingAgent = ModelProviderScheduleParsingAgent

@@ -63,7 +63,7 @@ class DeepSeekAiAgent(
         val requestContext = historyRepository.apiContextMessages(settings, extraSystemContextMessages())
         val response = sendRequest(buildRequest(requestContext, settings))
         val firstAnswer = JsonTools.extractAssistantContent(response.body())
-            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
         val firstUsage = JsonTools.extractUsage(response.body())
         val toolCalls = parseMcpToolCalls(firstAnswer)
         val finalResponse = if (toolCalls.isEmpty() || mcpToolGateway == null) {
@@ -92,7 +92,7 @@ class DeepSeekAiAgent(
             )
         }
         val answer = JsonTools.extractAssistantContent(finalResponse.body())
-            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
         val usage = firstUsage + if (finalResponse == response) chat.TokenUsage.ZERO else JsonTools.extractUsage(finalResponse.body())
         val finishReason = JsonTools.extractFinishReason(finalResponse.body())
         val limitReason = ResponseLimitClassifier.classify(
@@ -113,17 +113,21 @@ class DeepSeekAiAgent(
         return URI.create("$normalized/chat/completions")
     }
 
-    private fun buildRequest(history: List<ChatMessage>, settings: AgentSettings): HttpRequest =
-        HttpRequest.newBuilder(endpoint(settings.baseUrl))
-            .header("Authorization", "Bearer ${settings.apiKey}")
+    private fun buildRequest(history: List<ChatMessage>, settings: AgentSettings): HttpRequest {
+        val builder = HttpRequest.newBuilder(endpoint(settings.baseUrl))
             .header("Content-Type", "application/json")
+        if (settings.apiKey.isNotBlank()) {
+            builder.header("Authorization", "Bearer ${settings.apiKey}")
+        }
+        return builder
             .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(history, settings)))
             .build()
+    }
 
     private fun requestSummary(history: List<ChatMessage>): AgentResponse {
         val response = sendRequest(buildRequest(summaryMessages(history), settings))
         val summary = JsonTools.extractAssistantContent(response.body())
-            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response for the summary.")
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response for the summary.")
         val usage = JsonTools.extractUsage(response.body())
         val finishReason = JsonTools.extractFinishReason(response.body())
         return AgentResponse(summary, usage, finishReason)
@@ -322,14 +326,14 @@ class DeepSeekAiAgent(
             httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         } catch (exception: IOException) {
             throw AgentException(
-                "Could not connect to DeepSeek. Check the internet connection and base URL.",
+                "Could not connect to the model provider. Check the internet connection and base URL.",
                 exception
             )
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
-            throw AgentException("The DeepSeek request was interrupted.", exception)
+            throw AgentException("The model provider request was interrupted.", exception)
         } catch (exception: IllegalArgumentException) {
-            throw AgentException("Invalid DeepSeek URL: ${settings.baseUrl}", exception)
+            throw AgentException("Invalid model provider URL: ${settings.baseUrl}", exception)
         }
 
         if (response.statusCode() !in 200..299) {
@@ -338,13 +342,15 @@ class DeepSeekAiAgent(
                     "The chat history exceeded the model context window. Clear history with /clear or start a shorter conversation."
                 )
             }
-            throw AgentException("DeepSeek returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
+            throw AgentException("The model provider returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
         }
 
         return response
     }
 
     private fun buildRequestBody(history: List<ChatMessage>, settings: AgentSettings): String {
+        val model = settings.model.takeIf { it.isNotBlank() }
+            ?: throw AgentException("No model is selected. Run /models to load provider models, then choose one in /settings.")
         val messages = history
             .filter { it.role == Role.SYSTEM || it.role == Role.USER || it.role == Role.ASSISTANT }
             .joinToString(separator = ",") { message ->
@@ -353,7 +359,7 @@ class DeepSeekAiAgent(
 
         val thinkingType = if (settings.thinkingMode) "enabled" else "disabled"
         val fields = mutableListOf(
-            """"model": "${JsonTools.escape(settings.model)}"""",
+            """"model": "${JsonTools.escape(model)}"""",
             """"messages": [$messages]""",
             """"thinking": {"type": "$thinkingType"}"""
         )
@@ -373,3 +379,5 @@ class DeepSeekAiAgent(
         )
     }
 }
+
+typealias ModelProviderAiAgent = DeepSeekAiAgent

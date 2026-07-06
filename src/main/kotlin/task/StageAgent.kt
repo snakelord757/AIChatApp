@@ -56,6 +56,7 @@ class PromptedStageAgent(
     private val client: StageChatClient
 ) : StageAgent {
     private val messages = mutableListOf<ChatMessage>()
+    private val maxContractRetries = 1
 
     override val history: List<ChatMessage>
         get() = messages.toList()
@@ -65,16 +66,25 @@ class PromptedStageAgent(
             messages += ChatMessage(Role.SYSTEM, systemPrompt)
         }
         messages += ChatMessage(Role.USER, stagePrompt(input))
-        val response = client.send(messages)
-        response.events.forEach { messages += ChatMessage(Role.EVENT, it) }
-        messages += ChatMessage(Role.ASSISTANT, response.content, response.usage)
-        return parseStageResult(response)
+        repeat(maxContractRetries + 1) { attempt ->
+            val response = client.send(messages)
+            response.events.forEach { messages += ChatMessage(Role.EVENT, it) }
+            messages += ChatMessage(Role.ASSISTANT, response.content, response.usage)
+            parseStageResult(response)?.let { return it }
+            if (attempt < maxContractRetries) {
+                messages += ChatMessage(Role.USER, contractRetryPrompt())
+            } else {
+                return invalidContractResult(response)
+            }
+        }
+        error("Unreachable stage contract retry state.")
     }
 
     private fun stagePrompt(input: StageInput): String = buildString {
         appendLine("Return ONLY valid JSON in this shape:")
         appendLine("""{"success":true,"summary":"short summary","output":"human-readable result","issues":[],"requestedChanges":[],"retryReason":null}""")
         if (stage == TaskStage.PLANNING) {
+            appendLine("""For success=true, output MUST start with "Plan:" and contain only an execution plan for later stages, not first-person assistant prose or the final user-facing answer.""")
             appendLine("When MCP tools must run before execution, include a deterministic toolExecutionPlan object at the top level.")
             appendLine("""Use this exact optional shape: "toolExecutionPlan":{"chains":[{"id":"chain_id","mode":"sequential","dependsOn":[],"input":{},"steps":[{"id":"step_id","server":"serverName","tool":"toolName","arguments":{},"dependsOn":[],"inputMappings":{}}]}],"constraints":{"allowParallel":true}}""")
             appendLine("Allowed chain mode values are sequential and parallel. dependsOn values must reference earlier chain or step identifiers.")
@@ -113,25 +123,65 @@ class PromptedStageAgent(
         appendLine(input.results.joinToString("\n") { "${it.stage}: ${it.summary}" }.ifBlank { "none" })
     }
 
-    private fun parseStageResult(response: StageChatResponse): StageResult {
+    private fun parseStageResult(response: StageChatResponse): StageResult? {
         val content = response.content.stripJsonFence()
-        val success = extractBoolean(content, "success") ?: true
-        val output = CliPromptMarkerNormalizer.normalizeGeneratedText(extractString(content, "output") ?: content)
+        if (!content.isStrictStageJson()) return null
+        val success = extractBoolean(content, "success") ?: return null
+        val output = CliPromptMarkerNormalizer.normalizeGeneratedText(extractString(content, "output") ?: return null)
         val summary = extractString(content, "summary")
             ?.let(CliPromptMarkerNormalizer::normalizeGeneratedText)
-            ?: output.lineSequence().firstOrNull { it.isNotBlank() }?.take(240)
-            ?: stage.name
-        return StageResult(
+            ?: return null
+        val issues = extractArray(content, "issues") ?: return null
+        val requestedChanges = extractArray(content, "requestedChanges") ?: return null
+        if (!content.hasNullableStringField("retryReason")) return null
+        val result = StageResult(
             stage = stage,
             success = success,
             summary = summary,
             output = output,
-            issues = extractArray(content, "issues").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
-            requestedChanges = extractArray(content, "requestedChanges").map(CliPromptMarkerNormalizer::normalizeGeneratedText),
+            issues = issues.map(CliPromptMarkerNormalizer::normalizeGeneratedText),
+            requestedChanges = requestedChanges.map(CliPromptMarkerNormalizer::normalizeGeneratedText),
             retryReason = extractString(content, "retryReason")?.let(CliPromptMarkerNormalizer::normalizeGeneratedText),
             tokenUsage = response.usage,
             toolExecutionPlanJson = extractObjectJson(content, "toolExecutionPlan")
         )
+        return result.takeIf { it.respectsStageContract() }
+    }
+
+    private fun StageResult.respectsStageContract(): Boolean {
+        if (stage != TaskStage.PLANNING || !success) return true
+        val planningPayload = output.planningPayloadAfterMarker() ?: return false
+        return !planningPayload.looksLikeDirectPlanningAnswer()
+    }
+
+    private fun String.planningPayloadAfterMarker(): String? {
+        val normalized = trimStart().lowercase()
+        val trimmed = trimStart()
+        val marker = when {
+            normalized.startsWith("plan:") -> trimmed.substringAfter(":", missingDelimiterValue = "")
+            normalized.startsWith("план:") -> trimmed.substringAfter(":", missingDelimiterValue = "")
+            normalized.startsWith("plan ") -> trimmed.drop(5)
+            normalized.startsWith("план ") -> trimmed.drop(5)
+            else -> return null
+        }
+        return marker.trimStart()
+    }
+
+    private fun String.looksLikeDirectPlanningAnswer(): Boolean {
+        val normalized = trimStart().lowercase()
+        if (contains("```")) return true
+        return listOf(
+            "я могу",
+            "я умею",
+            "я помогу",
+            "конечно",
+            "да,",
+            "i can",
+            "i am",
+            "i'm",
+            "sure,",
+            "here is"
+        ).any { normalized.startsWith(it) }
     }
 
     private fun extractObjectJson(json: String, key: String): String? {
@@ -139,9 +189,9 @@ class PromptedStageAgent(
         return root[key]?.let(McpJson::stringify)
     }
 
-    private fun extractArray(json: String, key: String): List<String> {
-        var index = valueStart(json, key) ?: return emptyList()
-        if (index >= json.length || json[index] != '[') return emptyList()
+    private fun extractArray(json: String, key: String): List<String>? {
+        var index = valueStart(json, key) ?: return null
+        if (index >= json.length || json[index] != '[') return null
         index++
         val values = mutableListOf<String>()
         while (index < json.length) {
@@ -151,7 +201,7 @@ class PromptedStageAgent(
                 json[index] == ']' -> return values
                 json[index] == ',' -> index++
                 json[index] == '"' -> {
-                    val read = json.readJsonString(index) ?: return values
+                    val read = json.readJsonString(index) ?: return null
                     values += read.value
                     index = read.nextIndex
                 }
@@ -189,6 +239,43 @@ class PromptedStageAgent(
         }
         return null
     }
+
+    private fun String.isStrictStageJson(): Boolean {
+        val root = runCatching { McpJson.parse(this).asObject() }.getOrNull() ?: return false
+        return root.containsKey("success") &&
+            root.containsKey("summary") &&
+            root.containsKey("output") &&
+            root.containsKey("issues") &&
+            root.containsKey("requestedChanges") &&
+            root.containsKey("retryReason")
+    }
+
+    private fun String.hasNullableStringField(key: String): Boolean {
+        val root = runCatching { McpJson.parse(this).asObject() }.getOrNull() ?: return false
+        val value = root[key] ?: return false
+        return value is JsonValue.Null || value is JsonValue.StringValue
+    }
+
+    private fun contractRetryPrompt(): String =
+        """
+        Your previous response violated the stage system contract.
+        Return ONLY one valid JSON object with exactly this required shape:
+        {"success":true,"summary":"short summary","output":"stage output","issues":[],"requestedChanges":[],"retryReason":null}
+        Do not include Markdown, explanations, or final user-facing prose outside JSON.
+        ${if (stage == TaskStage.PLANNING) """PlanningAgent must not answer the user's task directly; for success=true, output must start with "Plan:" and contain only an execution plan, not first-person assistant prose or finished content.""" else ""}
+        """.trimIndent()
+
+    private fun invalidContractResult(response: StageChatResponse): StageResult =
+        StageResult(
+            stage = stage,
+            success = false,
+            summary = "Stage contract violation.",
+            output = "The model ignored the stage system contract and returned a non-JSON, incomplete, or semantically invalid response.",
+            issues = listOf("The stage response was not valid contract JSON or did not satisfy the stage-specific contract."),
+            requestedChanges = listOf("Return only the required stage JSON object and follow the system role."),
+            retryReason = "Invalid stage JSON contract.",
+            tokenUsage = response.usage
+        )
 
     private fun String.stripJsonFence(): String =
         trim()
@@ -295,6 +382,7 @@ class DefaultStageAgentFactory(
             Do NOT provide final deliverables, final code, final prose, or the finished solution.
             Do NOT address ExecutionAgent directly and do NOT write command-like prompts such as "ExecutionAgent, do ...".
             If the user asks for code, your plan may mention that ExecutionAgent must produce code, but you must not write that code.
+            For success=true, the output field MUST start with "Plan:"; responses without that planning marker or with first-person final-answer prose are invalid even when the JSON shape is correct.
             If available MCP tools can help answer the user accurately, you MUST include a top-level toolExecutionPlan. Do not merely mention tools in prose.
             In that toolExecutionPlan, include the exact server/tool names and JSON arguments for the required tool calls.
             Use only argument fields declared by the tool inputSchema. If inputSchema.properties is empty, suggested JSON arguments must be {}.
@@ -374,13 +462,14 @@ class DefaultStageAgentFactory(
 class DeepSeekStageChatClient(
     private var settings: AgentSettings,
     private val mcpToolGateway: McpToolGateway? = null,
+    private val structuredStageResponse: Boolean = true,
     private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
 ) : StageChatClient {
     override fun send(messages: List<ChatMessage>): StageChatResponse {
         val requestMessages = messages + mcpToolContextMessages()
         val response = sendRequest(requestMessages)
         val firstContent = JsonTools.extractAssistantContent(response.body())
-            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
         val firstUsage = JsonTools.extractUsage(response.body())
         val toolCalls = parseMcpToolCalls(firstContent)
         if (toolCalls.isEmpty() || mcpToolGateway == null) {
@@ -409,7 +498,7 @@ class DeepSeekStageChatClient(
             )
         )
         val content = JsonTools.extractAssistantContent(finalResponse.body())
-            ?: throw AgentException("DeepSeek returned an empty or unexpected JSON response.")
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
         val usage = firstUsage + JsonTools.extractUsage(finalResponse.body())
         ResponseLimitClassifier.classify(JsonTools.extractFinishReason(finalResponse.body()), settings, usage)
         return StageChatResponse(content, usage, JsonTools.extractFinishReason(finalResponse.body()), events)
@@ -419,24 +508,28 @@ class DeepSeekStageChatClient(
         this.settings = settings
     }
 
-    private fun buildRequest(messages: List<ChatMessage>): HttpRequest =
-        HttpRequest.newBuilder(endpoint(settings.baseUrl))
-            .header("Authorization", "Bearer ${settings.apiKey}")
+    private fun buildRequest(messages: List<ChatMessage>): HttpRequest {
+        val builder = HttpRequest.newBuilder(endpoint(settings.baseUrl))
             .header("Content-Type", "application/json")
+        if (settings.apiKey.isNotBlank()) {
+            builder.header("Authorization", "Bearer ${settings.apiKey}")
+        }
+        return builder
             .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages)))
             .build()
+    }
 
     private fun sendRequest(messages: List<ChatMessage>): HttpResponse<String> {
         val response = try {
             httpClient.send(buildRequest(messages), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         } catch (exception: IOException) {
-            throw AgentException("Could not connect to DeepSeek. Check the internet connection and base URL.", exception)
+            throw AgentException("Could not connect to the model provider. Check the internet connection and base URL.", exception)
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
-            throw AgentException("The DeepSeek request was interrupted.", exception)
+            throw AgentException("The model provider request was interrupted.", exception)
         }
         if (response.statusCode() !in 200..299) {
-            throw AgentException("DeepSeek returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
+            throw AgentException("The model provider returned HTTP ${response.statusCode()}: ${response.body().take(500)}")
         }
         return response
     }
@@ -444,18 +537,83 @@ class DeepSeekStageChatClient(
     private fun endpoint(baseUrl: String): URI = URI.create("${baseUrl.trim().trimEnd('/')}/chat/completions")
 
     private fun buildRequestBody(messages: List<ChatMessage>): String {
+        val model = settings.model.takeIf { it.isNotBlank() }
+            ?: throw AgentException("No model is selected. Run /models to load provider models, then choose one in /settings.")
         val payloadMessages = messages
             .filter { it.role == Role.SYSTEM || it.role == Role.USER || it.role == Role.ASSISTANT }
             .joinToString(",") { """{"role":"${JsonTools.escape(it.role.apiName)}","content":"${JsonTools.escape(it.content)}"}""" }
         val fields = mutableListOf(
-            """"model": "${JsonTools.escape(settings.model)}"""",
+            """"model": "${JsonTools.escape(model)}"""",
             """"messages": [$payloadMessages]""",
             """"thinking": {"type": "${if (settings.thinkingMode) "enabled" else "disabled"}"}"""
         )
+        if (structuredStageResponse) {
+            fields += stageResponseFormatJson()
+        }
         if (settings.thinkingMode) fields += """"reasoning_effort": "high"""" else fields += """"temperature": ${settings.temperature}"""
         if (settings.maxTokens > 0) fields += """"max_tokens": ${settings.maxTokens}"""
         return fields.joinToString(",\n  ", "{\n  ", "\n}")
     }
+
+    private fun stageResponseFormatJson(): String =
+        """
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "stage_or_tool_response",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "success": {"type": "boolean"},
+                    "summary": {"type": "string", "description": "Short stage summary, not a replacement for the stage output."},
+                    "output": {"type": "string", "description": "Stage output. For PlanningAgent success=true, start with Plan: and provide only an execution plan for later stages, not first-person assistant prose or the final user-facing answer."},
+                    "issues": {"type": "array", "items": {"type": "string"}},
+                    "requestedChanges": {"type": "array", "items": {"type": "string"}},
+                    "retryReason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    "toolExecutionPlan": {"type": "object"}
+                  },
+                  "required": ["success", "summary", "output", "issues", "requestedChanges", "retryReason"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mcpToolCall": {
+                      "type": "object",
+                      "properties": {
+                        "server": {"type": "string"},
+                        "tool": {"type": "string"},
+                        "arguments": {"type": "object"}
+                      },
+                      "required": ["server", "tool", "arguments"]
+                    }
+                  },
+                  "required": ["mcpToolCall"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mcpToolCalls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "server": {"type": "string"},
+                          "tool": {"type": "string"},
+                          "arguments": {"type": "object"}
+                        },
+                        "required": ["server", "tool", "arguments"]
+                      }
+                    }
+                  },
+                  "required": ["mcpToolCalls"]
+                }
+              ]
+            }
+          }
+        }
+        """.trimIndent()
 
     private fun mcpToolContextMessages(): List<ChatMessage> {
         val gateway = mcpToolGateway ?: return emptyList()
@@ -538,3 +696,5 @@ class DeepSeekStageChatClient(
         appendLine("Continue the current stage using these tool results. Return ONLY the valid JSON required by the stage contract. Do not request another MCP tool call.")
     }.trim()
 }
+
+typealias ModelProviderStageChatClient = DeepSeekStageChatClient

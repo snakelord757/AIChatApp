@@ -4,6 +4,7 @@ import agent.AgentException
 import agent.AgentResponse
 import agent.AgentSettings
 import agent.AiAgent
+import agent.ModelCatalogClient
 import agent.ResponseLimitReason
 import agent.SummaryEvents
 import chat.ChatHistoryRepository
@@ -46,6 +47,7 @@ class ChatApplication(
     private val scheduledTaskManager: ScheduledTaskManager? = null,
     private val scheduleParsingAgent: ScheduleParsingAgentClient? = null,
     private val scheduledTaskSummaryAgent: ScheduledTaskSummaryAgent? = null,
+    private val modelCatalogClient: ModelCatalogClient? = null,
     private val mcpScreenFactory: (ConsoleRenderer, ConsoleInput) -> McpScreen = { screenRenderer, screenInput ->
         McpScreen(screenRenderer, mcpStore, mcpClient, screenInput)
     },
@@ -105,6 +107,7 @@ class ChatApplication(
                         return
                     }
                     userInput == "/help" -> render { renderer.renderHelp() }
+                    userInput == "/models" -> handleModelsCommand()
                     userInput == "/summary" -> render { renderer.renderSummary(historyRepository.totalUsage(), pricing) }
                     userInput == "/facts" -> render { renderer.renderFacts(historyRepository.facts()) }
                     userInput == "/pause" -> handlePauseCommand()
@@ -176,6 +179,32 @@ class ChatApplication(
         val state = orchestrator.requestPause()
         activeTaskThread?.interrupt()
         render { renderer.renderSystem("Pause requested. Stopping the current stage: ${state.currentStage}.") }
+    }
+
+    private fun handleModelsCommand() {
+        val client = modelCatalogClient
+        if (client == null) {
+            render { renderer.renderError("Model catalog is unavailable in this session.") }
+            return
+        }
+        try {
+            val models = client.fetch(settings)
+            if (models.isEmpty()) {
+                render { renderer.renderWarning("The model provider returned no models.") }
+                return
+            }
+            settings = settings.copy(
+                model = settings.model.takeIf { it in models } ?: models.first(),
+                availableModels = models
+            )
+            agent.updateSettings(settings)
+            onSettingsChanged(settings)
+            render { renderer.renderModels(settings.model, models) }
+        } catch (exception: AgentException) {
+            render { renderer.renderError(exception.message ?: "Could not load models.") }
+        } catch (exception: RuntimeException) {
+            render { renderer.renderError(exception.message ?: "Could not load models.") }
+        }
     }
 
     private fun handleResumeCommand(command: String) {

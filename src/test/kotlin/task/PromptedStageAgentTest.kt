@@ -10,7 +10,7 @@ class PromptedStageAgentTest {
     @Test
     fun `planning prompt lists mcp tools for execution without enabling tool calls`() {
         val client = CapturingStageClient(
-            """{"success":true,"summary":"planned","output":"Use amiibo/search_amiibo in execution.","issues":[],"requestedChanges":[],"retryReason":null}"""
+            """{"success":true,"summary":"planned","output":"Plan: Use amiibo/search_amiibo in execution.","issues":[],"requestedChanges":[],"retryReason":null}"""
         )
         val agent = DefaultStageAgentFactory(
             clientFactory = { client },
@@ -209,6 +209,86 @@ class PromptedStageAgentTest {
     }
 
     @Test
+    fun `stage agent rejects non json direct answers instead of treating them as success`() {
+        val client = SequenceStageClient(
+            listOf(
+                "Here is the final answer instead of a plan.",
+                "Still not JSON."
+            )
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.PLANNING)
+
+        val result = agent.execute(
+            StageInput(
+                userTask = "Расскажи что ты умеешь?",
+                previousResult = null,
+                results = emptyList(),
+                workingContext = "",
+                clarifications = emptyList()
+            )
+        )
+
+        assertEquals(false, result.success)
+        assertEquals("Stage contract violation.", result.summary)
+        assertContains(result.issues.single(), "not valid contract JSON")
+        assertEquals(2, client.calls.size)
+        assertContains(client.calls[1].last().content, "previous response violated the stage system contract")
+        assertContains(client.calls[1].last().content, "PlanningAgent must not answer the user's task directly")
+    }
+
+    @Test
+    fun `stage agent retries invalid contract and accepts corrected json`() {
+        val client = SequenceStageClient(
+            listOf(
+                "Direct answer.",
+                """{"success":true,"summary":"plan","output":"Plan: only.","issues":[],"requestedChanges":[],"retryReason":null}"""
+            )
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.PLANNING)
+
+        val result = agent.execute(emptyInput())
+
+        assertEquals(true, result.success)
+        assertEquals("plan", result.summary)
+        assertEquals("Plan: only.", result.output)
+        assertEquals(2, client.calls.size)
+    }
+
+    @Test
+    fun `planning agent rejects valid json that contains direct answer instead of plan`() {
+        val client = SequenceStageClient(
+            listOf(
+                """{"success":true,"summary":"direct answer","output":"Plan: Я могу отвечать на вопросы, помогать с кодом и анализировать текст.","issues":[],"requestedChanges":[],"retryReason":null}""",
+                """{"success":true,"summary":"plan","output":"Plan: ExecutionAgent should answer the user's question about assistant capabilities in Russian.","issues":[],"requestedChanges":[],"retryReason":null}"""
+            )
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.PLANNING)
+
+        val result = agent.execute(emptyInput())
+
+        assertEquals(true, result.success)
+        assertEquals("Plan: ExecutionAgent should answer the user's question about assistant capabilities in Russian.", result.output)
+        assertEquals(2, client.calls.size)
+        assertContains(client.calls[1].last().content, """output must start with "Plan:"""")
+    }
+
+    @Test
+    fun `stage agent rejects incomplete json contract`() {
+        val client = SequenceStageClient(
+            listOf(
+                """{"summary":"missing required fields","output":"oops"}""",
+                """{"success":true,"summary":"still missing arrays","output":"oops","retryReason":null}"""
+            )
+        )
+        val agent = DefaultStageAgentFactory { client }.create(TaskStage.EXECUTION)
+
+        val result = agent.execute(emptyInput())
+
+        assertEquals(false, result.success)
+        assertContains(result.requestedChanges.single(), "required stage JSON")
+    }
+
+    @Test
     fun `planning agent adapts broad prompts to invariants before failing`() {
         val client = CapturingStageClient(
             """{"success":true,"summary":"plan","output":"Plan a compliant Kotlin-only answer.","issues":[],"requestedChanges":[],"retryReason":null}"""
@@ -349,6 +429,17 @@ class PromptedStageAgentTest {
         override fun send(messages: List<chat.ChatMessage>): StageChatResponse {
             this.messages = messages.toList()
             return StageChatResponse(response)
+        }
+    }
+
+    private class SequenceStageClient(
+        private val responses: List<String>
+    ) : StageChatClient {
+        val calls = mutableListOf<List<chat.ChatMessage>>()
+
+        override fun send(messages: List<chat.ChatMessage>): StageChatResponse {
+            calls += messages.toList()
+            return StageChatResponse(responses.getOrElse(calls.lastIndex) { responses.last() })
         }
     }
 

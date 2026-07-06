@@ -46,21 +46,31 @@ object LocalPropertiesConfig {
         val pricing = parsePricing(properties)
         val pricingWarning = if (pricing == null) pricingWarning() else null
 
-        val apiKey = properties.getProperty("DEEPSEEK_API_KEY")?.trim().orEmpty()
-        if (apiKey.isBlank() || apiKey == "your_api_key_here") {
+        val hasProviderConfig = properties.hasAny(
+            "MODEL_BASE_URL",
+            "MODEL_NAME",
+            "MODEL",
+            "MODEL_API_KEY",
+            "DEEPSEEK_BASE_URL",
+            "DEEPSEEK_MODEL",
+            "DEEPSEEK_API_KEY"
+        )
+        if (!hasProviderConfig) {
             return Result.Failure(
-                missingMessage("local.properties does not define the required DEEPSEEK_API_KEY."),
+                missingMessage("local.properties does not define model provider settings."),
                 fallback,
                 pricing,
                 pricingWarning
             )
         }
 
-        val baseUrl = properties.getProperty("DEEPSEEK_BASE_URL")?.trim()?.takeIf { it.isNotBlank() }
-            ?: fallback.baseUrl
-        val model = properties.getProperty("DEEPSEEK_MODEL")?.trim()?.takeIf { it.isNotBlank() }
-            ?.takeIf { it in AgentSettings.supportedModels }
-            ?: AgentSettings.defaultModel
+        val apiKey = properties.getFirst("MODEL_API_KEY", "DEEPSEEK_API_KEY")
+            ?.takeIf { it !in setOf("your_api_key_here", "your_model_api_key_here") }
+            .orEmpty()
+        val baseUrl = properties.getFirst("MODEL_BASE_URL", "DEEPSEEK_BASE_URL")
+            ?: if (properties.getFirst("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL") != null) "https://api.deepseek.com" else fallback.baseUrl
+        val model = properties.getFirst("MODEL_NAME", "MODEL", "DEEPSEEK_MODEL").orEmpty()
+        val availableModels = listOfNotNull(model.takeIf { it.isNotBlank() })
         val summaryInterval = properties.getProperty("AI_CHAT_SUMMARY_INTERVAL")
             ?.trim()
             ?.toIntOrNull()
@@ -87,7 +97,7 @@ object LocalPropertiesConfig {
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
-                missingMessage("local.properties defines an invalid DEEPSEEK_BASE_URL: $baseUrl"),
+                missingMessage("local.properties defines an invalid MODEL_BASE_URL: $baseUrl"),
                 fallback,
                 pricing,
                 pricingWarning
@@ -99,6 +109,7 @@ object LocalPropertiesConfig {
                 apiKey = apiKey,
                 baseUrl = baseUrl.trimEnd('/'),
                 model = model,
+                availableModels = availableModels,
                 summaryInterval = summaryInterval,
                 contextStrategy = contextStrategy,
                 contextWindowMessages = contextWindowMessages,
@@ -111,14 +122,19 @@ object LocalPropertiesConfig {
     }
 
     private fun parsePricing(properties: Properties): TokenPricing? {
-        val unified = properties.getUsd("DEEPSEEK_TOKEN_PRICE_PER_1M_USD")
+        val unified = properties.getUsd("MODEL_TOKEN_PRICE_PER_1M_USD")
+            ?: properties.getUsd("DEEPSEEK_TOKEN_PRICE_PER_1M_USD")
         if (unified != null) {
             return TokenPricing(unified, unified, unified)
         }
 
-        val input = properties.getUsd("DEEPSEEK_INPUT_PRICE_PER_1M_USD")
-        val output = properties.getUsd("DEEPSEEK_OUTPUT_PRICE_PER_1M_USD")
-        val reasoning = properties.getUsd("DEEPSEEK_REASONING_PRICE_PER_1M_USD") ?: output
+        val input = properties.getUsd("MODEL_INPUT_PRICE_PER_1M_USD")
+            ?: properties.getUsd("DEEPSEEK_INPUT_PRICE_PER_1M_USD")
+        val output = properties.getUsd("MODEL_OUTPUT_PRICE_PER_1M_USD")
+            ?: properties.getUsd("DEEPSEEK_OUTPUT_PRICE_PER_1M_USD")
+        val reasoning = properties.getUsd("MODEL_REASONING_PRICE_PER_1M_USD")
+            ?: properties.getUsd("DEEPSEEK_REASONING_PRICE_PER_1M_USD")
+            ?: output
         return if (input != null && output != null && reasoning != null) {
             TokenPricing(input, output, reasoning)
         } else {
@@ -129,8 +145,14 @@ object LocalPropertiesConfig {
     private fun Properties.getUsd(key: String): Double? =
         getProperty(key)?.trim()?.takeIf { it.isNotBlank() }?.toDoubleOrNull()?.takeIf { it >= 0.0 }
 
+    private fun Properties.getFirst(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { key -> getProperty(key)?.trim()?.takeIf { it.isNotBlank() } }
+
+    private fun Properties.hasAny(vararg keys: String): Boolean =
+        keys.any { key -> getProperty(key)?.trim()?.isNotBlank() == true }
+
     private fun pricingWarning(): String =
-        "Token pricing is not configured in local.properties. Add DEEPSEEK_TOKEN_PRICE_PER_1M_USD or DEEPSEEK_INPUT_PRICE_PER_1M_USD/DEEPSEEK_OUTPUT_PRICE_PER_1M_USD."
+        "Token pricing is not configured in local.properties. Add MODEL_TOKEN_PRICE_PER_1M_USD or MODEL_INPUT_PRICE_PER_1M_USD/MODEL_OUTPUT_PRICE_PER_1M_USD."
 
     private fun isValidUrl(value: String): Boolean = try {
         val uri = URI(value.trim())
@@ -142,10 +164,10 @@ object LocalPropertiesConfig {
     private fun missingMessage(reason: String): String = """
         $reason
         Expected path: $configPath
-        Required property: DEEPSEEK_API_KEY
+        Required property: MODEL_BASE_URL
         Example format:
-        DEEPSEEK_API_KEY=your_api_key_here
-        DEEPSEEK_BASE_URL=https://api.deepseek.com
-        DEEPSEEK_MODEL=deepseek-v4-flash
+        MODEL_BASE_URL=http://localhost:11434/v1
+        MODEL_NAME=
+        MODEL_API_KEY=
     """.trimIndent()
 }

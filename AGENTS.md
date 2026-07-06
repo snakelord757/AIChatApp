@@ -20,8 +20,8 @@
 ### Точка входа и запуск CLI
 
 - `src/main/kotlin/Main.kt` - минимальная JVM-точка входа, передает аргументы в CLI.
-- `src/main/kotlin/cli/AiChatCli.kt` - парсит CLI-команды, загружает конфигурацию, создает репозитории истории, памяти, invariants, MCP-клиент, агента DeepSeek или demo-агента, task orchestrator и запускает интерактивное приложение.
-- `src/main/kotlin/cli/ChatApplication.kt` - основной интерактивный цикл чата: команды `/help`, `/settings`, `/mcp`, `/summary`, `/facts`, `/memory`, `/pause`, `/resume`, `/checkpoint`, `/branch`, `/clear`, `/exit`, отправка сообщений агенту и запуск/возобновление задач.
+- `src/main/kotlin/cli/AiChatCli.kt` - парсит CLI-команды, загружает конфигурацию, создает репозитории истории, памяти, invariants, MCP-клиент, агента OpenAI-compatible model provider или demo-агента, task orchestrator и запускает интерактивное приложение.
+- `src/main/kotlin/cli/ChatApplication.kt` - основной интерактивный цикл чата: команды `/help`, `/settings`, `/models`, `/mcp`, `/summary`, `/facts`, `/memory`, `/pause`, `/resume`, `/checkpoint`, `/branch`, `/clear`, `/exit`, отправка сообщений агенту и запуск/возобновление задач.
 - `src/main/kotlin/cli/ConsoleInput.kt` - чтение пользовательского ввода из консоли.
 - `src/main/kotlin/cli/ConsoleRenderer.kt` - рендеринг сообщений, подсказок, ошибок, usage/cost, статусов задач и экранов CLI.
 - `src/main/kotlin/cli/SettingsScreen.kt` - экран интерактивного изменения настроек агента.
@@ -31,7 +31,8 @@
 ### Агент и запросы к модели
 
 - `src/main/kotlin/agent/AiAgent.kt` - общий интерфейс чат-агента.
-- `src/main/kotlin/agent/DeepSeekAiAgent.kt` - реальный агент DeepSeek: собирает контекст, обновляет память, делает summary/facts-запросы, отправляет `/chat/completions`, обрабатывает usage, лимиты и MCP tool-call JSON.
+- `src/main/kotlin/agent/DeepSeekAiAgent.kt` - основной агент для OpenAI-compatible `/chat/completions`: собирает контекст, обновляет память, делает summary/facts-запросы, обрабатывает usage, лимиты и MCP tool-call JSON; старое имя класса сохранено для совместимости, новое нейтральное имя доступно как `ModelProviderAiAgent`.
+- `src/main/kotlin/agent/ModelCatalogClient.kt` - получает список доступных моделей через OpenAI-compatible `GET /models`, поддерживает Bearer token при наличии `MODEL_API_KEY`; команда `/models` обновляет каталог, а `/settings` выбирает модель из последнего загруженного списка.
 - `src/main/kotlin/agent/MockAiAgent.kt` - локальный demo-агент для работы без API-ключа.
 - `src/main/kotlin/agent/AgentSettings.kt` - настройки модели, URL, токенов, стратегии контекста, summary interval и режима planning swarm.
 - `src/main/kotlin/agent/AgentResponse.kt` - модель ответа агента с usage и причиной завершения.
@@ -61,6 +62,7 @@
 - `src/main/kotlin/task/TaskStageAuditStore.kt` - audit-лог вызовов стадий в JSONL.
 - `src/main/kotlin/task/TaskContextProvider.kt` - готовит рабочий контекст для stage agents из истории, памяти и invariants.
 - `src/main/kotlin/task/ToolExecutionPipeline.kt` - выполняет запланированные MCP tool-call chains на стадии EXECUTION: валидирует explicit dependencies/input mappings, поддерживает sequential/parallel chains, передает outputs между шагами и пишет события выполнения для консоли и audit.
+  - Stage-запросы к OpenAI-compatible провайдеру используют `response_format=json_schema` для строгого JSON-контракта `StageResult` или MCP tool-call wrapper; schedule helpers, summary и swarm role agents отключают этот режим, когда им нужен другой формат.
 
 ### Planning swarm
 
@@ -97,7 +99,7 @@
 
 ### Конфигурация и цены
 
-- `src/main/kotlin/config/LocalPropertiesConfig.kt` - читает `local.properties`, валидирует DeepSeek API key/base URL/model и опции приложения.
+- `src/main/kotlin/config/LocalPropertiesConfig.kt` - читает `local.properties`, валидирует нейтральные `MODEL_*` настройки OpenAI-compatible провайдера, token pricing и опции приложения; старые `DEEPSEEK_*` ключи поддерживаются как fallback.
 - `src/main/kotlin/config/TokenPricing.kt` - модель цен токенов для отображения стоимости.
 
 ### Консольное форматирование

@@ -59,6 +59,29 @@ class SettingsScreenTest {
         assertEquals(false, result.planningSwarmEnabled)
     }
 
+    @Test
+    fun `model can be selected from configured available models`() {
+        val result = captureStdout {
+            SettingsScreen(
+                renderer = ConsoleRenderer(),
+                input = ConsoleInput(
+                    BufferedReader(
+                        StringReader("set model qwen2.5-coder\nset model missing-model\nback\n")
+                    )
+                )
+            ).open(
+                AgentSettings(
+                    apiKey = "",
+                    model = "llama3.1",
+                    availableModels = listOf("llama3.1", "qwen2.5-coder"),
+                    systemPrompt = "system"
+                )
+            )
+        }
+
+        assertEquals("qwen2.5-coder", result.model)
+    }
+
     private fun captureStdout(block: () -> AgentSettings): AgentSettings {
         val originalOut = System.out
         val stream = ByteArrayOutputStream()
