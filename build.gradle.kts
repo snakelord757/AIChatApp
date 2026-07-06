@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "local.aichat"
-version = "1.0.0"
+version = "1.11.0"
 
 val buildJavaVersion = providers.gradleProperty("buildJavaVersion")
     .map(String::toInt)
@@ -49,6 +49,14 @@ tasks.named<Sync>("installDist") {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.register("printProjectVersion") {
+    group = "help"
+    description = "Prints the project version for CI release tagging."
+    doLast {
+        println(project.version)
+    }
 }
 
 graalvmNative {
