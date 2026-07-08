@@ -192,6 +192,12 @@ class ConsoleRenderer(
         println("Context window messages: ${settings.contextWindowMessages}")
         println("Summary interval: ${if (settings.summaryInterval > 0) settings.summaryInterval else "disabled"}")
         println("Planning swarm: ${if (settings.planningSwarmEnabled) "enabled" else "disabled"}")
+        println("RAG: ${if (settings.ragEnabled) "enabled" else "disabled"}")
+        println("RAG indices: ${chat.AppPaths.indicesDirectory()}")
+        println("RAG Ollama URL: ${settings.ragOllamaUrl}")
+        println("RAG embedding model: ${settings.ragEmbeddingModel ?: "from index"}")
+        println("RAG searchTopK: ${settings.ragSearchTopK}")
+        println("RAG topK: ${settings.ragTopK}")
         println("Base URL: ${settings.baseUrl}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }

@@ -23,6 +23,7 @@ import scheduled.DemoScheduleParsingAgent
 import scheduled.DemoScheduledTaskSummaryAgent
 import scheduled.ScheduledTaskManager
 import scheduled.ScheduledTaskStore
+import rag.RagSearchService
 import task.ModelProviderStageChatClient
 import task.DefaultStageAgentFactory
 import task.StageChatClient
@@ -103,6 +104,7 @@ object AiChatCli {
             val mcpStore = McpServerStore(AppPaths.mcpServersPath())
             val mcpClient = ProcessMcpClient()
             val mcpToolGateway = StoredMcpToolGateway(mcpStore, mcpClient)
+            val ragSearchService = RagSearchService(AppPaths.indicesDirectory())
 
             val historyRepository = ChatHistoryRepository(
                 systemPrompt = settings.systemPrompt,
@@ -123,7 +125,8 @@ object AiChatCli {
                     initialSettings = settings,
                     invariantRepository = invariantRepository,
                     memoryRepository = memoryRepository,
-                    mcpToolGateway = mcpToolGateway
+                    mcpToolGateway = mcpToolGateway,
+                    ragSearchService = ragSearchService
                 )
                 is LocalPropertiesConfig.Result.Failure -> {
                     renderer.renderError(configResult.message)

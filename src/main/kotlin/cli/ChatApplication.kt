@@ -359,7 +359,7 @@ class ChatApplication(
         }
         memoryRepository?.setWorkingStatus(TaskStatus.PENDING)
 
-        if (orchestrator != null) {
+        if (orchestrator != null && !settings.ragEnabled) {
             val thread = Thread {
                 runOrchestratedTask(
                     input = userInput,
@@ -376,7 +376,15 @@ class ChatApplication(
         }
 
         try {
-            render { renderer.renderSystem("Sending request to the assistant...") }
+            render {
+                renderer.renderSystem(
+                    if (settings.ragEnabled) {
+                        "Searching RAG indexes and sending request to the assistant..."
+                    } else {
+                        "Sending request to the assistant..."
+                    }
+                )
+            }
             val response = agent.send(userInput, object : SummaryEvents {
                     override fun onSummaryStarted() {
                         render { renderer.renderSystem("Starting chat summarization.") }

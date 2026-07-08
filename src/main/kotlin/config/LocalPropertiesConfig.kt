@@ -94,6 +94,28 @@ object LocalPropertiesConfig {
             ?.lowercase()
             ?.let { it == "true" || it == "1" || it == "yes" }
             ?: fallback.planningSwarmEnabled
+        val ragEnabled = properties.getProperty("AI_CHAT_RAG_ENABLED")
+            ?.trim()
+            ?.lowercase()
+            ?.let { it == "true" || it == "1" || it == "yes" }
+            ?: fallback.ragEnabled
+        val ragOllamaUrl = properties.getProperty("AI_CHAT_RAG_OLLAMA_URL")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: fallback.ragOllamaUrl
+        val ragEmbeddingModel = properties.getProperty("AI_CHAT_RAG_EMBEDDING_MODEL")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val ragTopK = properties.getProperty("AI_CHAT_RAG_TOP_K")
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: fallback.ragTopK
+        val ragSearchTopK = properties.getProperty("AI_CHAT_RAG_SEARCH_TOP_K")
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: fallback.ragSearchTopK
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -114,7 +136,12 @@ object LocalPropertiesConfig {
                 contextStrategy = contextStrategy,
                 contextWindowMessages = contextWindowMessages,
                 allowClarifyingQuestions = allowClarifyingQuestions,
-                planningSwarmEnabled = planningSwarmEnabled
+                planningSwarmEnabled = planningSwarmEnabled,
+                ragEnabled = ragEnabled,
+                ragOllamaUrl = ragOllamaUrl.trimEnd('/'),
+                ragEmbeddingModel = ragEmbeddingModel,
+                ragSearchTopK = ragSearchTopK.coerceAtLeast(ragTopK),
+                ragTopK = ragTopK
             ),
             pricing,
             pricingWarning

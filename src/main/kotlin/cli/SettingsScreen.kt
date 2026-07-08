@@ -56,6 +56,11 @@ class SettingsScreen(
         println("set contextWindow <number> - change sliding/facts context window")
         println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
         println("set planningSwarmEnabled <true|false> - enable or disable experimental planning swarm")
+        println("set ragEnabled <true|false> - enable or disable RAG chat mode")
+        println("set ragOllamaUrl <url> - change the Ollama URL for RAG embeddings")
+        println("set ragEmbeddingModel <model|index> - override embedding model or use each index model")
+        println("set ragSearchTopK <number> - change initial RAG retrieval count")
+        println("set ragTopK <number> - change final RAG context chunk count")
         println("set systemPrompt <text> - change the system prompt")
         println("set baseUrl <url> - change the base URL")
         println("back - return to chat")
@@ -109,6 +114,36 @@ class SettingsScreen(
                     "on", "true", "enabled", "1", "yes" -> settings.copy(planningSwarmEnabled = true)
                     "off", "false", "disabled", "0", "no" -> settings.copy(planningSwarmEnabled = false)
                     else -> invalid(settings)
+                }
+            }
+            "ragenabled", "rag_enabled", "rag" -> {
+                when (value.trim().lowercase()) {
+                    "on", "true", "enabled", "1", "yes" -> settings.copy(ragEnabled = true)
+                    "off", "false", "disabled", "0", "no" -> settings.copy(ragEnabled = false)
+                    else -> invalid(settings)
+                }
+            }
+            "ragollamaurl", "rag_ollama_url" -> {
+                if (!isValidUrl(value)) invalid(settings) else settings.copy(ragOllamaUrl = value.trim().trimEnd('/'))
+            }
+            "ragembeddingmodel", "rag_embedding_model", "embedmodel" -> {
+                val model = value.trim()
+                if (model.isBlank() || model.equals("index", ignoreCase = true)) {
+                    settings.copy(ragEmbeddingModel = null)
+                } else {
+                    settings.copy(ragEmbeddingModel = model)
+                }
+            }
+            "ragsearchtopk", "rag_search_top_k", "searchtopk" -> {
+                val topK = value.toIntOrNull()
+                if (topK == null || topK <= 0) invalid(settings) else settings.copy(ragSearchTopK = topK.coerceAtLeast(settings.ragTopK))
+            }
+            "ragtopk", "rag_top_k" -> {
+                val topK = value.toIntOrNull()
+                if (topK == null || topK <= 0) {
+                    invalid(settings)
+                } else {
+                    settings.copy(ragTopK = topK, ragSearchTopK = settings.ragSearchTopK.coerceAtLeast(topK))
                 }
             }
             "systemprompt", "prompt" -> {

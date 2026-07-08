@@ -14,6 +14,9 @@ import mcp.McpToolGateway
 import mcp.asArray
 import mcp.asObject
 import mcp.asString
+import rag.RagSearchResponse
+import rag.RagSearchService
+import rag.SearchResult
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -28,6 +31,7 @@ class DeepSeekAiAgent(
     private val invariantRepository: InvariantRepository? = null,
     private val memoryRepository: MemoryRepository? = null,
     private val mcpToolGateway: McpToolGateway? = null,
+    private val ragSearchService: RagSearchService? = null,
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(20))
         .build()
@@ -36,6 +40,10 @@ class DeepSeekAiAgent(
     private val personalMemoryWindowMessages = 20
 
     override fun send(userMessage: String, summaryEvents: SummaryEvents): AgentResponse {
+        if (settings.ragEnabled) {
+            return sendWithRag(userMessage)
+        }
+
         historyRepository.addUser(userMessage)
         memoryRepository?.reinforcePersonalSignals(userMessage)
         requestPersonalMemoryUpdate()
@@ -104,6 +112,40 @@ class DeepSeekAiAgent(
         return AgentResponse(answer, usage, finishReason, limitReason)
     }
 
+    private fun sendWithRag(userMessage: String): AgentResponse {
+        historyRepository.addUser(userMessage)
+        val rag = ragSearchService ?: throw AgentException("RAG is enabled, but the RAG search service is unavailable.")
+        val search = try {
+            rag.search(userMessage, settings)
+        } catch (exception: RuntimeException) {
+            throw AgentException(exception.message ?: "RAG search failed.", exception)
+        }
+        if (search.indexCount == 0) {
+            val answer = "$UNKNOWN_RAG_ANSWER\n\nSources:\n- none (no RAG indexes found in ${chat.AppPaths.indicesDirectory()})"
+            historyRepository.addAssistant(answer, chat.TokenUsage.ZERO)
+            return AgentResponse(answer, chat.TokenUsage.ZERO, "stop")
+        }
+        if (search.results.isEmpty()) {
+            val answer = "$UNKNOWN_RAG_ANSWER\n\nSources:\n- none (RAG indexes loaded: ${search.indexCount}, chunks: ${search.chunkCount})"
+            historyRepository.addAssistant(answer, chat.TokenUsage.ZERO)
+            return AgentResponse(answer, chat.TokenUsage.ZERO, "stop")
+        }
+
+        val response = sendRequest(buildRequest(ragMessages(userMessage, search), settings))
+        val answer = JsonTools.extractAssistantContent(response.body())
+            ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
+        val usage = JsonTools.extractUsage(response.body())
+        val finishReason = JsonTools.extractFinishReason(response.body())
+        val content = appendRagSources(answer, search.results)
+        val limitReason = ResponseLimitClassifier.classify(
+            finishReason = finishReason,
+            settings = settings,
+            usage = usage
+        )
+        historyRepository.addAssistant(content, usage)
+        return AgentResponse(content, usage, finishReason, limitReason)
+    }
+
     override fun updateSettings(settings: AgentSettings) {
         this.settings = settings
     }
@@ -169,6 +211,47 @@ class DeepSeekAiAgent(
             memoryRepository?.contextMessages().orEmpty() +
             mcpToolContextMessages()
 
+    private fun ragMessages(question: String, search: RagSearchResponse): List<ChatMessage> =
+        listOf(
+            ChatMessage(Role.SYSTEM, settings.systemPrompt),
+            ChatMessage(
+                Role.SYSTEM,
+                """
+                RAG mode is enabled. Answer using only the RAG context chunks provided by the application.
+                Do not use MCP tools, task planning, memory, summaries, sticky facts, or external knowledge to fill gaps.
+                If the chunks do not contain enough evidence, answer exactly: $UNKNOWN_RAG_ANSWER
+                Keep the answer concise and preserve the user's language.
+                """.trimIndent()
+            ),
+            ChatMessage(Role.USER, ragUserPrompt(question, search.results))
+        )
+
+    private fun ragUserPrompt(question: String, results: List<SearchResult>): String = buildString {
+        appendLine("RAG context chunks:")
+        results.forEachIndexed { index, result ->
+            val metadata = result.chunk.metadata
+            appendLine()
+            appendLine("[${index + 1}] chunk_id=${metadata.chunkId}, score=${java.lang.String.format(java.util.Locale.US, "%.4f", result.score)}")
+            appendLine("Title: ${metadata.title}")
+            metadata.section?.let { appendLine("Section: $it") }
+            appendLine("Source: ${metadata.source}")
+            appendLine("Text:")
+            appendLine(result.chunk.text)
+        }
+        appendLine()
+        appendLine("Question:")
+        appendLine(question)
+    }
+
+    private fun appendRagSources(answer: String, results: List<SearchResult>): String {
+        val sources = results.joinToString(separator = "\n") { result ->
+            val metadata = result.chunk.metadata
+            val section = metadata.section?.let { ", section=$it" }.orEmpty()
+            "- ${metadata.chunkId}: ${metadata.title}$section, source=${metadata.source}, score=${java.lang.String.format(java.util.Locale.US, "%.4f", result.score)}"
+        }
+        return "${answer.trim()}\n\nSources:\n$sources"
+    }
+
     private fun mcpToolContextMessages(): List<ChatMessage> {
         val gateway = mcpToolGateway ?: return emptyList()
         val tools = runCatching { gateway.availableTools() }.getOrElse { emptyList() }
@@ -225,6 +308,10 @@ class DeepSeekAiAgent(
         val toolName: String,
         val argumentsJson: String
     )
+
+    private companion object {
+        const val UNKNOWN_RAG_ANSWER = "\u041d\u0435 \u0437\u043d\u0430\u044e"
+    }
 
     private fun mcpToolResultsPrompt(toolResults: List<McpToolCallResult>): String = buildString {
         appendLine("MCP tool results:")

@@ -51,6 +51,8 @@ object AppPaths {
 
     fun mcpServersPath(): Path = applicationDirectory().resolve("mcp-servers.json")
 
+    fun indicesDirectory(): Path = applicationDirectory().resolve("indices")
+
     private fun isWindows(): Boolean =
         System.getProperty("os.name").contains("windows", ignoreCase = true)
 

@@ -85,6 +85,14 @@
 - `src/main/kotlin/mcp/McpModels.kt` - модели серверов, инструментов, статусов и результатов вызова.
 - `src/main/kotlin/mcp/McpJson.kt` - JSON-парсер/рендерер MCP-слоя.
 
+### RAG-поиск по индексам
+
+- `src/main/kotlin/rag/RagModels.kt` - модели JSON-индекса, чанков, загруженных индексов и результатов поиска.
+- `src/main/kotlin/rag/IndexReader.kt` - читает готовые `*-index.json` из каталога `indices` рабочего каталога чата и восстанавливает структуру индексированных чанков.
+- `src/main/kotlin/rag/EmbeddingClient.kt` - строит embedding пользовательского вопроса через Ollama `/api/embeddings`, используя модель из индекса или явный override настроек.
+- `src/main/kotlin/rag/RagSearchService.kt` - загружает индексы, ищет top-K релевантных чанков через cosine similarity и возвращает контекст для RAG-ответа.
+- При включенном `ragEnabled` обычные сообщения чата обходят task pipeline и отвечают только по найденным чанкам из `indices`; режим управляется через `/settings` и `AI_CHAT_RAG_*` настройки.
+
 ### Markdown memory
 
 - `src/main/kotlin/memory/MemoryRepository.kt` - собирает memory system blocks, управляет permanent/personal/work memory, усиливает повторяющиеся пользовательские предпочтения.

@@ -15,6 +15,11 @@ AI_CHAT_SUMMARY_INTERVAL=20
 AI_CHAT_CONTEXT_STRATEGY=sliding
 AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
 AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=false
+AI_CHAT_RAG_ENABLED=false
+AI_CHAT_RAG_OLLAMA_URL=http://localhost:11434
+AI_CHAT_RAG_EMBEDDING_MODEL=
+AI_CHAT_RAG_SEARCH_TOP_K=15
+AI_CHAT_RAG_TOP_K=5
 ```
 
 `MODEL_API_KEY` is optional for local providers that do not require authentication. Available models are loaded from the provider's OpenAI-compatible `GET /models` endpoint each time `/models` is executed; use `/settings` and `set model <model-name>` to switch models without editing API keys.
@@ -166,6 +171,34 @@ Clarifying questions are disabled by default. Enable them in `local.properties` 
 ```properties
 AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=true
 ```
+
+## RAG Chat Mode
+
+RAG mode answers normal chat messages from prebuilt JSON indexes. Put one or more `*-index.json` files in:
+
+```text
+<app-dir>/indices
+```
+
+`<app-dir>` is the same application directory used for `chat-history.json`, for example `%LOCALAPPDATA%/AIChatApp` on Windows unless `-Daichat.history.dir` or `APP_HOME` overrides it.
+
+Enable RAG in `/settings`:
+
+```text
+set ragEnabled true
+```
+
+or in `local.properties`:
+
+```properties
+AI_CHAT_RAG_ENABLED=true
+AI_CHAT_RAG_OLLAMA_URL=http://localhost:11434
+AI_CHAT_RAG_EMBEDDING_MODEL=
+AI_CHAT_RAG_SEARCH_TOP_K=15
+AI_CHAT_RAG_TOP_K=5
+```
+
+When RAG is enabled, normal chat messages bypass the task orchestration pipeline and use only chunks retrieved from the `indices` directory as retrieval context. The question embedding uses the model stored in each index by default; set `ragEmbeddingModel` or `AI_CHAT_RAG_EMBEDDING_MODEL` only when all indexes should be queried with an explicit embedding model.
 
 ## Task Orchestration
 

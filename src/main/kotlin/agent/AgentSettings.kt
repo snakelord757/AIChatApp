@@ -15,6 +15,11 @@ data class AgentSettings(
     val contextWindowMessages: Int = 20,
     val allowClarifyingQuestions: Boolean = false,
     val planningSwarmEnabled: Boolean = false,
+    val ragEnabled: Boolean = false,
+    val ragOllamaUrl: String = "http://localhost:11434",
+    val ragEmbeddingModel: String? = null,
+    val ragSearchTopK: Int = 15,
+    val ragTopK: Int = 5,
     val systemPrompt: String
 ) {
     companion object {
