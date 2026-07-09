@@ -157,6 +157,15 @@
   - При включенном RAG обычные сообщения обходят task pipeline и формируют ответ только на основе найденных чанков; добавлен вывод источников, настройки Ollama embedding endpoint/model override и документация по размещению индексов.
   - Версия приложения поднята до `1.16.0`.
 
+### Add configurable model prompt settings
+
+- Дата выполнения: 2026-07-09
+- Актуальный хэш: 7881f8e8ee10caf0e791b706075f2a7f8907bd3e
+- Саммари:
+  - Добавлены настройки подключаемой модели `MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, `MODEL_CONTEXT_WINDOW_TOKENS` и runtime-команды `/settings` для температуры, лимита ответа и контекстного окна.
+  - Добавлено переопределение системного prompt через `AI_CHAT_SYSTEM_PROMPT` и `/settings set systemPrompt`: пустой prompt сохраняет стандартный staged pipeline, пользовательский prompt переводит обычный чат в прямой ответ агента.
+  - Версия приложения поднята до `1.17.0`.
+
 ### Add scheduled task management
 
 - Дата выполнения: 2026-06-27
