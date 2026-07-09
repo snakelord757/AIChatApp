@@ -52,6 +52,7 @@ class SettingsScreen(
         println("set thinking <on|off> - enable or disable thinking mode")
         println("set temperature <0..2> - change the temperature")
         println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
+        println("set modelContextWindow <tokens> - change the model context window used for limit warnings")
         println("set contextStrategy <sliding|facts> - change context strategy")
         println("set contextWindow <number> - change sliding/facts context window")
         println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
@@ -61,7 +62,7 @@ class SettingsScreen(
         println("set ragEmbeddingModel <model|index> - override embedding model or use each index model")
         println("set ragSearchTopK <number> - change initial RAG retrieval count")
         println("set ragTopK <number> - change final RAG context chunk count")
-        println("set systemPrompt <text> - change the system prompt")
+        println("set systemPrompt <text|default> - override the system prompt, or restore the staged default")
         println("set baseUrl <url> - change the base URL")
         println("back - return to chat")
     }
@@ -96,6 +97,10 @@ class SettingsScreen(
             "maxtokens", "max_tokens" -> {
                 val maxTokens = value.toIntOrNull()
                 if (maxTokens == null) invalid(settings) else settings.copy(maxTokens = maxTokens)
+            }
+            "modelcontextwindow", "model_context_window", "modelcontextwindowtokens", "model_context_window_tokens" -> {
+                val window = value.toLongOrNull()
+                if (window == null || window <= 0L) invalid(settings) else settings.copy(modelContextWindowTokens = window)
             }
             "summaryinterval", "summary_interval", "summary" -> {
                 val interval = value.toIntOrNull()
@@ -147,7 +152,16 @@ class SettingsScreen(
                 }
             }
             "systemprompt", "prompt" -> {
-                if (value.isBlank()) invalid(settings) else settings.copy(systemPrompt = value)
+                val prompt = value.trim()
+                when {
+                    prompt.equals("default", ignoreCase = true) || prompt.equals("reset", ignoreCase = true) ->
+                        settings.copy(
+                            systemPrompt = formatting.ConsoleSystemPrompt.value,
+                            systemPromptOverridden = false
+                        )
+                    prompt.isBlank() -> invalid(settings)
+                    else -> settings.copy(systemPrompt = prompt, systemPromptOverridden = true)
+                }
             }
             "baseurl", "url" -> {
                 if (!isValidUrl(value)) invalid(settings) else settings.copy(baseUrl = value.trim().trimEnd('/'))

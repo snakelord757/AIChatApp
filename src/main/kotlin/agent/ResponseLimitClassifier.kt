@@ -3,7 +3,6 @@ package agent
 import chat.TokenUsage
 
 object ResponseLimitClassifier {
-    private const val DEFAULT_CONTEXT_LENGTH = 1_000_000L
     private const val DEFAULT_MAX_OUTPUT = 384_000L
     private const val OBSERVED_SERVER_DEFAULT_OUTPUT_LIMIT = 8_192L
 
@@ -16,7 +15,7 @@ object ResponseLimitClassifier {
         return when {
             settings.maxTokens > 0 && generatedTokens >= settings.maxTokens ->
                 ResponseLimitReason.REQUEST_MAX_TOKENS
-            usage.totalTokens >= DEFAULT_CONTEXT_LENGTH ->
+            settings.modelContextWindowTokens > 0 && usage.totalTokens >= settings.modelContextWindowTokens ->
                 ResponseLimitReason.MODEL_CONTEXT_WINDOW
             generatedTokens >= DEFAULT_MAX_OUTPUT ->
                 ResponseLimitReason.MODEL_MAX_OUTPUT

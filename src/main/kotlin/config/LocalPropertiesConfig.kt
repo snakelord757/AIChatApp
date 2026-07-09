@@ -76,6 +76,20 @@ object LocalPropertiesConfig {
             ?.toIntOrNull()
             ?.takeIf { it >= 0 }
             ?: fallback.summaryInterval
+        val temperature = properties.getProperty("MODEL_TEMPERATURE")
+            ?.trim()
+            ?.toDoubleOrNull()
+            ?.takeIf { it in 0.0..2.0 }
+            ?: fallback.temperature
+        val maxTokens = properties.getProperty("MODEL_MAX_TOKENS")
+            ?.trim()
+            ?.toIntOrNull()
+            ?: fallback.maxTokens
+        val modelContextWindowTokens = properties.getProperty("MODEL_CONTEXT_WINDOW_TOKENS")
+            ?.trim()
+            ?.toLongOrNull()
+            ?.takeIf { it > 0L }
+            ?: fallback.modelContextWindowTokens
         val contextStrategy = properties.getProperty("AI_CHAT_CONTEXT_STRATEGY")
             ?.let(ContextStrategy::parse)
             ?: fallback.contextStrategy
@@ -116,6 +130,9 @@ object LocalPropertiesConfig {
             ?.toIntOrNull()
             ?.takeIf { it > 0 }
             ?: fallback.ragSearchTopK
+        val systemPromptOverride = properties.getProperty("AI_CHAT_SYSTEM_PROMPT")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
 
         if (!isValidUrl(baseUrl)) {
             return Result.Failure(
@@ -132,6 +149,9 @@ object LocalPropertiesConfig {
                 baseUrl = baseUrl.trimEnd('/'),
                 model = model,
                 availableModels = availableModels,
+                temperature = temperature,
+                maxTokens = maxTokens,
+                modelContextWindowTokens = modelContextWindowTokens,
                 summaryInterval = summaryInterval,
                 contextStrategy = contextStrategy,
                 contextWindowMessages = contextWindowMessages,
@@ -141,7 +161,9 @@ object LocalPropertiesConfig {
                 ragOllamaUrl = ragOllamaUrl.trimEnd('/'),
                 ragEmbeddingModel = ragEmbeddingModel,
                 ragSearchTopK = ragSearchTopK.coerceAtLeast(ragTopK),
-                ragTopK = ragTopK
+                ragTopK = ragTopK,
+                systemPrompt = systemPromptOverride ?: fallback.systemPrompt,
+                systemPromptOverridden = systemPromptOverride != null
             ),
             pricing,
             pricingWarning
@@ -196,5 +218,9 @@ object LocalPropertiesConfig {
         MODEL_BASE_URL=http://localhost:11434/v1
         MODEL_NAME=
         MODEL_API_KEY=
+        MODEL_TEMPERATURE=0.7
+        MODEL_MAX_TOKENS=0
+        MODEL_CONTEXT_WINDOW_TOKENS=1000000
+        AI_CHAT_SYSTEM_PROMPT=
     """.trimIndent()
 }

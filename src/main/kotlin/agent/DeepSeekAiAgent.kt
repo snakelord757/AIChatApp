@@ -45,30 +45,33 @@ class DeepSeekAiAgent(
         }
 
         historyRepository.addUser(userMessage)
-        memoryRepository?.reinforcePersonalSignals(userMessage)
-        requestPersonalMemoryUpdate()
+        if (!settings.systemPromptOverridden) {
+            memoryRepository?.reinforcePersonalSignals(userMessage)
+            requestPersonalMemoryUpdate()
 
-        if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
-            requestFacts()?.let { response ->
-                historyRepository.applyExtractedFacts(response.content, response.usage)
+            if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
+                requestFacts()?.let { response ->
+                    historyRepository.applyExtractedFacts(response.content, response.usage)
+                }
+            }
+
+            if (settings.summaryInterval > 0 &&
+                historyRepository.shouldCreateSummary(settings.summaryInterval)
+            ) {
+                summaryEvents.onSummaryStarted()
+                val summaryCutoffIndex = historyRepository.indexBeforeLatestUserMessage()
+                val summaryResponse = requestSummary(historyRepository.summarySourceMessages())
+                summaryEvents.onSummaryUsage(summaryResponse.usage)
+                historyRepository.saveSummary(
+                    content = summaryResponse.content,
+                    usage = summaryResponse.usage,
+                    lastMessageIndex = summaryCutoffIndex
+                )
             }
         }
 
-        if (settings.summaryInterval > 0 &&
-            historyRepository.shouldCreateSummary(settings.summaryInterval)
-        ) {
-            summaryEvents.onSummaryStarted()
-            val summaryCutoffIndex = historyRepository.indexBeforeLatestUserMessage()
-            val summaryResponse = requestSummary(historyRepository.summarySourceMessages())
-            summaryEvents.onSummaryUsage(summaryResponse.usage)
-            historyRepository.saveSummary(
-                content = summaryResponse.content,
-                usage = summaryResponse.usage,
-                lastMessageIndex = summaryCutoffIndex
-            )
-        }
-
-        val requestContext = historyRepository.apiContextMessages(settings, extraSystemContextMessages())
+        val extraSystemContext = if (settings.systemPromptOverridden) emptyList() else extraSystemContextMessages()
+        val requestContext = historyRepository.apiContextMessages(settings, extraSystemContext)
         val response = sendRequest(buildRequest(requestContext, settings))
         val firstAnswer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")

@@ -359,7 +359,7 @@ class ChatApplication(
         }
         memoryRepository?.setWorkingStatus(TaskStatus.PENDING)
 
-        if (orchestrator != null && !settings.ragEnabled) {
+        if (orchestrator != null && !settings.shouldUseDirectChat()) {
             val thread = Thread {
                 runOrchestratedTask(
                     input = userInput,
@@ -380,6 +380,8 @@ class ChatApplication(
                 renderer.renderSystem(
                     if (settings.ragEnabled) {
                         "Searching RAG indexes and sending request to the assistant..."
+                    } else if (settings.systemPromptOverridden) {
+                        "Sending request to the assistant with the custom system prompt..."
                     } else {
                         "Sending request to the assistant..."
                     }

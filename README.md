@@ -10,7 +10,11 @@ Create `local.properties` in the project root:
 MODEL_BASE_URL=http://localhost:11434/v1
 MODEL_NAME=
 MODEL_API_KEY=
+MODEL_TEMPERATURE=0.7
+MODEL_MAX_TOKENS=0
+MODEL_CONTEXT_WINDOW_TOKENS=1000000
 MODEL_TOKEN_PRICE_PER_1M_USD=
+AI_CHAT_SYSTEM_PROMPT=
 AI_CHAT_SUMMARY_INTERVAL=20
 AI_CHAT_CONTEXT_STRATEGY=sliding
 AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
@@ -23,6 +27,10 @@ AI_CHAT_RAG_TOP_K=5
 ```
 
 `MODEL_API_KEY` is optional for local providers that do not require authentication. Available models are loaded from the provider's OpenAI-compatible `GET /models` endpoint each time `/models` is executed; use `/settings` and `set model <model-name>` to switch models without editing API keys.
+
+`MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, and `MODEL_CONTEXT_WINDOW_TOKENS` configure generation and limit classification for the connected model. `MODEL_MAX_TOKENS=0` omits `max_tokens` from chat completion requests.
+
+`AI_CHAT_SYSTEM_PROMPT` is optional. When it is empty, regular chat messages use the default staged task pipeline. When it is set, regular chat messages bypass the staged pipeline and the model answers directly with that system prompt. The same behavior can be changed at runtime with `/settings`, `set systemPrompt <text>`, and `set systemPrompt default`.
 
 `local.properties` is ignored by Git. Do not commit real API keys.
 

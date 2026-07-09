@@ -188,6 +188,7 @@ class ConsoleRenderer(
         println("Thinking mode: ${if (settings.thinkingMode) "enabled" else "disabled"}")
         println("Temperature: ${settings.temperature}")
         println("Max tokens: ${if (settings.maxTokens > 0) settings.maxTokens else "unlimited"}")
+        println("Model context window tokens: ${settings.modelContextWindowTokens}")
         println("Context strategy: ${settings.contextStrategy.displayName}")
         println("Context window messages: ${settings.contextWindowMessages}")
         println("Summary interval: ${if (settings.summaryInterval > 0) settings.summaryInterval else "disabled"}")
@@ -199,6 +200,7 @@ class ConsoleRenderer(
         println("RAG searchTopK: ${settings.ragSearchTopK}")
         println("RAG topK: ${settings.ragTopK}")
         println("Base URL: ${settings.baseUrl}")
+        println("System prompt mode: ${if (settings.systemPromptOverridden) "custom direct chat" else "default staged"}")
         println("System prompt: ${settings.systemPrompt.take(120).replace('\n', ' ')}")
     }
 
