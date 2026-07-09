@@ -160,7 +160,7 @@ class ChatHistoryRepository(
         )
 
     fun personalMemorySourceMessages(window: Int): List<ChatMessage> =
-        lastDialogMessages(activeSummaryTailMessages(), window)
+        lastDialogMessages(activeSummaryTailMessages()).takeLast(window.coerceAtLeast(0))
 
     fun activeSummaryText(): String? = activeSummary()?.content
 

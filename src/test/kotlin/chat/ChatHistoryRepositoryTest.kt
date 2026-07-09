@@ -241,7 +241,7 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `context sends facts block plus recent dialog window`() {
+    fun `context sends facts block plus dialog within token budget`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.addUser("goal: ship token context")
         repository.addAssistant("noted")
@@ -259,7 +259,14 @@ class ChatHistoryRepositoryTest {
         assertEquals(Role.SYSTEM, context[1].role)
         assertContains(context[1].content, "Sticky facts:")
         assertContains(context[1].content, "goal: ship token context")
-        assertEquals(listOf(ChatMessage(Role.USER, "latest")), context.drop(2))
+        assertEquals(
+            listOf(
+                ChatMessage(Role.USER, "goal: ship token context"),
+                ChatMessage(Role.ASSISTANT, "noted"),
+                ChatMessage(Role.USER, "latest")
+            ),
+            context.drop(2)
+        )
     }
 
     @Test

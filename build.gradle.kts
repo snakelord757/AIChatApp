@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "local.aichat"
-version = "1.18.1"
+version = "1.18.2"
 
 val buildJavaVersion = providers.gradleProperty("buildJavaVersion")
     .map(String::toInt)
