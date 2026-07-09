@@ -25,6 +25,13 @@ class ChatHistoryRepository(
     private var activeBranchId: String? = restoredActiveBranchId
     private var checkpoint: ChatCheckpoint? = restoredCheckpoint
 
+    private companion object {
+        const val TOKEN_CHARS_APPROXIMATION = 4
+        const val MESSAGE_OVERHEAD_TOKENS = 8
+        const val DEFAULT_RESPONSE_RESERVE_TOKENS = 4_096L
+        const val MIN_REQUEST_CONTEXT_TOKENS = 1_024L
+    }
+
     init {
         if (restoredMessages.isEmpty()) {
             messages += ChatMessage(Role.SYSTEM, systemPrompt)
@@ -113,28 +120,44 @@ class ChatHistoryRepository(
         return apiContextMessages(settings, emptyList())
     }
 
-    fun apiContextMessages(settings: AgentSettings, memoryMessages: List<ChatMessage>): List<ChatMessage> {
-        return when (settings.contextStrategy) {
-            ContextStrategy.SLIDING_WINDOW -> withMemoryMessages(
-                summarizedSlidingWindowMessages(settings.contextWindowMessages, activeMessages()),
-                memoryMessages
-            )
-            ContextStrategy.STICKY_FACTS -> buildList {
-                add(activeSystemPrompt())
-                addAll(memoryMessages.apiMessages())
-                activeSummaryMessage()?.let(::add)
-                factsMessage()?.let(::add)
-                addAll(lastDialogMessages(activeSummaryTailMessages(), settings.contextWindowMessages))
-            }
-        }
+    fun apiContextMessages(
+        settings: AgentSettings,
+        memoryMessages: List<ChatMessage>,
+        includeDerivedContext: Boolean = true
+    ): List<ChatMessage> {
+        val prefix = contextPrefix(memoryMessages, includeDerivedContext)
+        return fitToModelContextWindow(
+            fixedMessages = prefix,
+            tailMessages = lastDialogMessages(activeSummaryTailMessages()),
+            contextWindowTokens = settings.modelContextWindowTokens,
+            responseReserveTokens = settings.responseReserveTokens()
+        )
     }
 
     fun facts(): Map<String, String> = activeFacts()
 
     fun lastFactsUsage(): TokenUsage? = activeLastFactsUsage()
 
-    fun factsSourceMessages(window: Int): List<ChatMessage> =
-        lastDialogMessages(activeSummaryTailMessages(), window)
+    fun isModelContextWindowReached(
+        settings: AgentSettings,
+        memoryMessages: List<ChatMessage>,
+        includeDerivedContext: Boolean = true
+    ): Boolean {
+        val fixedMessages = contextPrefix(memoryMessages, includeDerivedContext)
+        val tailMessages = lastDialogMessages(activeSummaryTailMessages())
+        val requestBudget = requestContextBudget(settings.modelContextWindowTokens, settings.responseReserveTokens())
+        val requiredTokens = fixedMessages.sumOf { it.estimatedTokens() } +
+            tailMessages.sumOf { it.estimatedTokens() }
+        return requiredTokens >= requestBudget
+    }
+
+    fun factsSourceMessages(settings: AgentSettings): List<ChatMessage> =
+        fitToModelContextWindow(
+            fixedMessages = emptyList(),
+            tailMessages = lastDialogMessages(activeSummaryTailMessages()),
+            contextWindowTokens = settings.modelContextWindowTokens,
+            responseReserveTokens = settings.responseReserveTokens()
+        )
 
     fun personalMemorySourceMessages(window: Int): List<ChatMessage> =
         lastDialogMessages(activeSummaryTailMessages(), window)
@@ -145,11 +168,13 @@ class ChatHistoryRepository(
 
     fun activeBranchDisplayName(): String = activeBranchName() ?: "main"
 
-    fun applyExtractedFacts(content: String, usage: TokenUsage? = null) {
+    fun applyExtractedFacts(content: String, usage: TokenUsage? = null, recordEvent: Boolean = true) {
         usage?.let {
             addActiveFactsUsage(it)
             setActiveLastFactsUsage(it)
-            appendMessage(ChatMessage(Role.EVENT, factsUsageMessage(it)))
+            if (recordEvent) {
+                appendMessage(ChatMessage(Role.EVENT, factsUsageMessage(it)))
+            }
         }
         if (updateFactsFromLines(content)) {
             persist()
@@ -371,21 +396,6 @@ class ChatHistoryRepository(
     private fun List<ChatMessage>.apiMessages(): List<ChatMessage> =
         filter { it.role == Role.SYSTEM || it.role == Role.USER || it.role == Role.ASSISTANT }
 
-    private fun slidingWindowMessages(source: List<ChatMessage>, window: Int): List<ChatMessage> = buildList {
-        source.firstOrNull { it.role == Role.SYSTEM }?.let(::add)
-        addAll(lastDialogMessages(source, window))
-    }
-
-    private fun summarizedSlidingWindowMessages(window: Int, source: List<ChatMessage>): List<ChatMessage> {
-        val currentSummary = activeSummary() ?: return slidingWindowMessages(source, window)
-
-        return buildList {
-            add(activeSystemPrompt())
-            add(summaryMessage(currentSummary.content))
-            addAll(lastDialogMessages(source.drop(currentSummary.lastMessageIndex + 1), window))
-        }
-    }
-
     private fun summaryTailMessages(): List<ChatMessage> {
         val currentSummary = summary ?: return messages
         return messages.drop(currentSummary.lastMessageIndex + 1)
@@ -418,23 +428,48 @@ class ChatHistoryRepository(
         return ChatMessage(Role.SYSTEM, content)
     }
 
-    private fun lastDialogMessages(source: List<ChatMessage>, window: Int): List<ChatMessage> {
-        val limit = window.coerceAtLeast(0)
-        if (limit == 0) return emptyList()
-        return source
-            .filter { it.role == Role.USER || it.role == Role.ASSISTANT }
-            .takeLast(limit)
+    private fun contextPrefix(memoryMessages: List<ChatMessage>, includeDerivedContext: Boolean): List<ChatMessage> =
+        buildList {
+            add(activeSystemPrompt())
+            addAll(memoryMessages.apiMessages())
+            if (includeDerivedContext) {
+                activeSummaryMessage()?.let(::add)
+                factsMessage()?.let(::add)
+            }
+        }
+
+    private fun lastDialogMessages(source: List<ChatMessage>): List<ChatMessage> =
+        source.filter { it.role == Role.USER || it.role == Role.ASSISTANT }
+
+    private fun fitToModelContextWindow(
+        fixedMessages: List<ChatMessage>,
+        tailMessages: List<ChatMessage>,
+        contextWindowTokens: Long,
+        responseReserveTokens: Long
+    ): List<ChatMessage> {
+        val requestBudget = requestContextBudget(contextWindowTokens, responseReserveTokens)
+        val selectedTail = ArrayDeque<ChatMessage>()
+        var usedTokens = fixedMessages.sumOf { it.estimatedTokens() }
+        for (message in tailMessages.asReversed()) {
+            val messageTokens = message.estimatedTokens()
+            if (usedTokens + messageTokens <= requestBudget || selectedTail.isEmpty()) {
+                selectedTail.addFirst(message)
+                usedTokens += messageTokens
+            } else {
+                break
+            }
+        }
+        return fixedMessages + selectedTail
     }
 
-    private fun withMemoryMessages(
-        contextMessages: List<ChatMessage>,
-        memoryMessages: List<ChatMessage>
-    ): List<ChatMessage> {
-        if (memoryMessages.isEmpty()) return contextMessages
-        val system = contextMessages.firstOrNull { it.role == Role.SYSTEM } ?: activeSystemPrompt()
-        val tail = contextMessages.dropWhile { it == system }
-        return listOf(system) + memoryMessages.apiMessages() + tail
-    }
+    private fun requestContextBudget(contextWindowTokens: Long, responseReserveTokens: Long): Long =
+        (contextWindowTokens - responseReserveTokens).coerceAtLeast(MIN_REQUEST_CONTEXT_TOKENS)
+
+    private fun AgentSettings.responseReserveTokens(): Long =
+        if (maxTokens > 0) maxTokens.toLong() else DEFAULT_RESPONSE_RESERVE_TOKENS
+
+    private fun ChatMessage.estimatedTokens(): Long =
+        ((content.length + TOKEN_CHARS_APPROXIMATION - 1) / TOKEN_CHARS_APPROXIMATION + MESSAGE_OVERHEAD_TOKENS).toLong()
 
     private fun updateFacts(content: String) {
         val currentFacts = linkedMapOf<String, String>()

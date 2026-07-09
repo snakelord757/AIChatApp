@@ -1,7 +1,6 @@
 package cli
 
 import agent.AgentSettings
-import chat.ContextStrategy
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -27,20 +26,19 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun `context strategy and window can be updated`() {
+    fun `model context window can be updated`() {
         val result = captureStdout {
             SettingsScreen(
                 renderer = ConsoleRenderer(),
                 input = ConsoleInput(
                     BufferedReader(
-                        StringReader("set contextStrategy facts\nset contextWindow 7\nback\n")
+                        StringReader("set modelContextWindow 32768\nback\n")
                     )
                 )
             ).open(AgentSettings(apiKey = "", systemPrompt = "system"))
         }
 
-        assertEquals(ContextStrategy.STICKY_FACTS, result.contextStrategy)
-        assertEquals(7, result.contextWindowMessages)
+        assertEquals(32768L, result.modelContextWindowTokens)
     }
 
     @Test

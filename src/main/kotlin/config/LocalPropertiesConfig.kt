@@ -1,7 +1,6 @@
 package config
 
 import agent.AgentSettings
-import chat.ContextStrategy
 import formatting.ConsoleSystemPrompt
 import java.net.URI
 import java.nio.file.Files
@@ -90,14 +89,6 @@ object LocalPropertiesConfig {
             ?.toLongOrNull()
             ?.takeIf { it > 0L }
             ?: fallback.modelContextWindowTokens
-        val contextStrategy = properties.getProperty("AI_CHAT_CONTEXT_STRATEGY")
-            ?.let(ContextStrategy::parse)
-            ?: fallback.contextStrategy
-        val contextWindowMessages = properties.getProperty("AI_CHAT_CONTEXT_WINDOW_MESSAGES")
-            ?.trim()
-            ?.toIntOrNull()
-            ?.takeIf { it >= 0 }
-            ?: fallback.contextWindowMessages
         val allowClarifyingQuestions = properties.getProperty("AI_CHAT_ALLOW_CLARIFYING_QUESTIONS")
             ?.trim()
             ?.lowercase()
@@ -153,8 +144,6 @@ object LocalPropertiesConfig {
                 maxTokens = maxTokens,
                 modelContextWindowTokens = modelContextWindowTokens,
                 summaryInterval = summaryInterval,
-                contextStrategy = contextStrategy,
-                contextWindowMessages = contextWindowMessages,
                 allowClarifyingQuestions = allowClarifyingQuestions,
                 planningSwarmEnabled = planningSwarmEnabled,
                 ragEnabled = ragEnabled,

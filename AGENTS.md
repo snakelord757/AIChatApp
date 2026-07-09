@@ -31,10 +31,10 @@
 ### Агент и запросы к модели
 
 - `src/main/kotlin/agent/AiAgent.kt` - общий интерфейс чат-агента.
-- `src/main/kotlin/agent/DeepSeekAiAgent.kt` - основной агент для OpenAI-compatible `/chat/completions`: собирает контекст, обновляет память, делает summary/facts-запросы, обрабатывает usage, лимиты и MCP tool-call JSON; старое имя класса сохранено для совместимости, новое нейтральное имя доступно как `ModelProviderAiAgent`.
+- `src/main/kotlin/agent/DeepSeekAiAgent.kt` - основной агент для OpenAI-compatible `/chat/completions`: собирает контекст, обновляет память, делает summary-запросы и тихую sticky-facts компрессию при заполнении контекстного окна, обрабатывает usage, лимиты и MCP tool-call JSON; старое имя класса сохранено для совместимости, новое нейтральное имя доступно как `ModelProviderAiAgent`.
 - `src/main/kotlin/agent/ModelCatalogClient.kt` - получает список доступных моделей через OpenAI-compatible `GET /models`, поддерживает Bearer token при наличии `MODEL_API_KEY`; команда `/models` обновляет каталог, а `/settings` выбирает модель из последнего загруженного списка.
 - `src/main/kotlin/agent/MockAiAgent.kt` - локальный demo-агент для работы без API-ключа.
-- `src/main/kotlin/agent/AgentSettings.kt` - настройки модели, URL, токенов, стратегии контекста, summary interval и режима planning swarm.
+- `src/main/kotlin/agent/AgentSettings.kt` - настройки модели, URL, токенов, token budget контекстного окна, summary interval и режима planning swarm.
 - `src/main/kotlin/agent/AgentResponse.kt` - модель ответа агента с usage и причиной завершения.
 - `src/main/kotlin/agent/AgentException.kt` - доменное исключение агентского слоя.
 - `src/main/kotlin/agent/JsonTools.kt` - утилиты для JSON: escape, извлечение content/usage/finish_reason и распознавание ошибок контекстного окна.
@@ -47,7 +47,7 @@
 - `src/main/kotlin/chat/ChatHistoryJson.kt` - сериализация и десериализация состояния истории.
 - `src/main/kotlin/chat/ChatMessage.kt`, `src/main/kotlin/chat/Role.kt` - базовые модели сообщений и ролей.
 - `src/main/kotlin/chat/ChatSummary.kt` - модель summary активного диалога или ветки.
-- `src/main/kotlin/chat/ContextStrategy.kt` - стратегии контекста `sliding` и `facts`.
+- Контекст обычного чата собирается по явному `modelContextWindowTokens`: системные блоки, summary/facts и последние сообщения ограничиваются примерным token budget.
 - `src/main/kotlin/chat/TokenUsage.kt` - учет токенов.
 - `src/main/kotlin/chat/AppPaths.kt` - вычисляет пути к данным приложения: история, память, MCP-серверы, task-state, audit, swarm session, invariants.
 - `src/main/kotlin/chat/MojibakeRepair.kt` - восстановление текста при проблемах с кодировкой.
@@ -156,6 +156,15 @@
   - Добавлен переключаемый RAG-режим обычного чата с настройками `/settings` и `AI_CHAT_RAG_*`, загрузкой готовых `*-index.json` из каталога `indices` рабочего каталога чата и поиском top-K чанков через cosine similarity.
   - При включенном RAG обычные сообщения обходят task pipeline и формируют ответ только на основе найденных чанков; добавлен вывод источников, настройки Ollama embedding endpoint/model override и документация по размещению индексов.
   - Версия приложения поднята до `1.16.0`.
+
+### Add configurable model prompt settings
+
+- Дата выполнения: 2026-07-09
+- Актуальный хэш: 7881f8e8ee10caf0e791b706075f2a7f8907bd3e
+- Саммари:
+  - Добавлены настройки подключаемой модели `MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, `MODEL_CONTEXT_WINDOW_TOKENS` и runtime-команды `/settings` для температуры, лимита ответа и контекстного окна.
+  - Добавлено переопределение системного prompt через `AI_CHAT_SYSTEM_PROMPT` и `/settings set systemPrompt`: пустой prompt сохраняет стандартный staged pipeline, пользовательский prompt переводит обычный чат в прямой ответ агента.
+  - Версия приложения поднята до `1.17.0`.
 
 ### Add scheduled task management
 

@@ -1,7 +1,6 @@
 package cli
 
 import agent.AgentSettings
-import chat.ContextStrategy
 import java.net.URI
 
 class SettingsScreen(
@@ -52,9 +51,7 @@ class SettingsScreen(
         println("set thinking <on|off> - enable or disable thinking mode")
         println("set temperature <0..2> - change the temperature")
         println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
-        println("set modelContextWindow <tokens> - change the model context window used for limit warnings")
-        println("set contextStrategy <sliding|facts> - change context strategy")
-        println("set contextWindow <number> - change sliding/facts context window")
+        println("set modelContextWindow <tokens> - change the model context window used for context trimming")
         println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
         println("set planningSwarmEnabled <true|false> - enable or disable experimental planning swarm")
         println("set ragEnabled <true|false> - enable or disable RAG chat mode")
@@ -105,14 +102,6 @@ class SettingsScreen(
             "summaryinterval", "summary_interval", "summary" -> {
                 val interval = value.toIntOrNull()
                 if (interval == null || interval < 0) invalid(settings) else settings.copy(summaryInterval = interval)
-            }
-            "contextstrategy", "context_strategy", "strategy" -> {
-                val strategy = ContextStrategy.parse(value)
-                if (strategy == null) invalid(settings) else settings.copy(contextStrategy = strategy)
-            }
-            "contextwindow", "context_window", "contextwindowmessages", "context_window_messages" -> {
-                val window = value.toIntOrNull()
-                if (window == null || window < 0) invalid(settings) else settings.copy(contextWindowMessages = window)
             }
             "planningswarmenabled", "planning_swarm_enabled", "planningswarm", "swarm" -> {
                 when (value.trim().lowercase()) {

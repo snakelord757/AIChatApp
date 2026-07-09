@@ -189,8 +189,6 @@ class ConsoleRenderer(
         println("Temperature: ${settings.temperature}")
         println("Max tokens: ${if (settings.maxTokens > 0) settings.maxTokens else "unlimited"}")
         println("Model context window tokens: ${settings.modelContextWindowTokens}")
-        println("Context strategy: ${settings.contextStrategy.displayName}")
-        println("Context window messages: ${settings.contextWindowMessages}")
         println("Summary interval: ${if (settings.summaryInterval > 0) settings.summaryInterval else "disabled"}")
         println("Planning swarm: ${if (settings.planningSwarmEnabled) "enabled" else "disabled"}")
         println("RAG: ${if (settings.ragEnabled) "enabled" else "disabled"}")

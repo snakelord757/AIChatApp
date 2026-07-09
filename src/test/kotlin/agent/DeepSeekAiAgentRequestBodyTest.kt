@@ -2,7 +2,6 @@ package agent
 
 import chat.ChatHistoryRepository
 import chat.ChatMessage
-import chat.ContextStrategy
 import chat.Role
 import invariants.InvariantRepository
 import invariants.InvariantStore
@@ -91,17 +90,16 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
-    fun `selected context strategy controls request context`() {
+    fun `model context window controls request context`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("one")
-        repository.addAssistant("two")
+        repository.addUser("one ".repeat(3_000))
+        repository.addAssistant("two ".repeat(3_000))
         repository.addUser("three")
 
         val context = repository.apiContextMessages(
             AgentSettings(
                 apiKey = "",
-                contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                contextWindowMessages = 1,
+                modelContextWindowTokens = 1_100,
                 systemPrompt = "system"
             )
         )
@@ -116,65 +114,35 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
-    fun `sticky facts strategy extracts facts before main request`() {
+    fun `sticky facts are extracted silently when model context window is reached`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("previous request")
-        repository.addAssistant("previous answer")
+        repository.addUser("older request")
+        repository.addAssistant("details ".repeat(3_000))
         val httpClient = RecordingHttpClient(
             listOf(
-                assistantResponse("project_goal: remember generated facts"),
-                assistantResponse("final answer"),
-                assistantResponse("preferred_language: Kotlin"),
-                assistantResponse("second answer")
+                assistantResponse("project_goal: keep the important plan"),
+                assistantResponse("final answer")
             )
         )
         val agent = DeepSeekAiAgent(
             historyRepository = repository,
             initialSettings = AgentSettings(
                 apiKey = "key",
-                contextStrategy = ContextStrategy.STICKY_FACTS,
-                contextWindowMessages = 2,
+                modelContextWindowTokens = 1_100,
                 summaryInterval = 0,
                 systemPrompt = "system"
             ),
             httpClient = httpClient
         )
 
-        agent.send("We need generated facts")
+        agent.send("goal: keep the important plan")
 
         assertEquals(2, httpClient.requestBodies.size)
-        assertContains(httpClient.requestBodies[0], "Extract durable sticky facts")
-        assertContains(httpClient.requestBodies[0], "Recent messages:")
-        assertFalse(httpClient.requestBodies[0].contains("previous request"))
-        assertContains(httpClient.requestBodies[0], "assistant: previous answer")
-        assertContains(httpClient.requestBodies[0], "user: We need generated facts")
+        assertContains(httpClient.requestBodies[0], "reaching the configured model context window")
+        assertContains(httpClient.requestBodies[0], "goal: keep the important plan")
         assertContains(httpClient.requestBodies[1], "Sticky facts:")
-        assertContains(httpClient.requestBodies[1], "project_goal: remember generated facts")
-        assertContains(httpClient.requestBodies[1], "assistant\",\"content\":\"previous answer")
-        assertContains(httpClient.requestBodies[1], "user\",\"content\":\"We need generated facts")
-        assertEquals(mapOf("project_goal" to "remember generated facts"), repository.facts())
-        assertEquals(chat.TokenUsage(inputTokens = 2, outputTokens = 2), repository.totalUsage())
-
-        agent.send("Use Kotlin for implementation")
-
-        assertEquals(4, httpClient.requestBodies.size)
-        assertContains(httpClient.requestBodies[2], "Existing facts:")
-        assertContains(httpClient.requestBodies[2], "project_goal: remember generated facts")
-        assertContains(httpClient.requestBodies[2], "assistant: final answer")
-        assertContains(httpClient.requestBodies[2], "user: Use Kotlin for implementation")
-        assertContains(httpClient.requestBodies[3], "Sticky facts:")
-        assertContains(httpClient.requestBodies[3], "project_goal: remember generated facts")
-        assertContains(httpClient.requestBodies[3], "preferred_language: Kotlin")
-        assertContains(httpClient.requestBodies[3], "assistant\",\"content\":\"final answer")
-        assertContains(httpClient.requestBodies[3], "user\",\"content\":\"Use Kotlin for implementation")
-        assertEquals(
-            mapOf(
-                "project_goal" to "remember generated facts",
-                "preferred_language" to "Kotlin"
-            ),
-            repository.facts()
-        )
-        assertEquals(chat.TokenUsage(inputTokens = 4, outputTokens = 4), repository.totalUsage())
+        assertContains(httpClient.requestBodies[1], "project_goal: keep the important plan")
+        assertFalse(repository.all().any { it.role == Role.EVENT && it.content.contains("Sticky facts") })
     }
 
     @Test
@@ -266,8 +234,6 @@ class DeepSeekAiAgentRequestBodyTest {
                 initialSettings = AgentSettings(
                     apiKey = "key",
                     summaryInterval = 0,
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                    contextWindowMessages = 2,
                     systemPrompt = "system"
                 ),
                 memoryRepository = memoryRepository,
@@ -314,7 +280,6 @@ class DeepSeekAiAgentRequestBodyTest {
                 initialSettings = AgentSettings(
                     apiKey = "key",
                     summaryInterval = 0,
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
                     systemPrompt = "system"
                 ),
                 invariantRepository = invariantRepository,
@@ -332,43 +297,6 @@ class DeepSeekAiAgentRequestBodyTest {
             assertTrue(invariantIndex > systemIndex)
             assertTrue(memoryIndex > invariantIndex)
             assertContains(mainBody, "Never use Java.")
-        } finally {
-            directory.toFile().deleteRecursively()
-        }
-    }
-
-    @Test
-    fun `sticky facts strategy still includes invariants`() {
-        val directory = Files.createTempDirectory("aichat-agent-invariants-facts-test")
-        try {
-            val repository = ChatHistoryRepository(systemPrompt = "system")
-            val invariantRepository = InvariantRepository(InvariantStore(directory.resolve("invariants.md")))
-            Files.writeString(invariantRepository.path(), "# Assistant Invariants\n\n- Keep base prompt first.\n", StandardCharsets.UTF_8)
-            val httpClient = RecordingHttpClient(
-                listOf(
-                    assistantResponse("project: invariants"),
-                    assistantResponse("final answer")
-                )
-            )
-            val agent = DeepSeekAiAgent(
-                historyRepository = repository,
-                initialSettings = AgentSettings(
-                    apiKey = "key",
-                    contextStrategy = ContextStrategy.STICKY_FACTS,
-                    contextWindowMessages = 2,
-                    summaryInterval = 0,
-                    systemPrompt = "system"
-                ),
-                invariantRepository = invariantRepository,
-                httpClient = httpClient
-            )
-
-            agent.send("goal: include invariants")
-
-            assertEquals(2, httpClient.requestBodies.size)
-            assertContains(httpClient.requestBodies[1], "Assistant invariants:")
-            assertContains(httpClient.requestBodies[1], "Keep base prompt first.")
-            assertContains(httpClient.requestBodies[1], "Sticky facts:")
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -490,7 +418,7 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
-    fun `markdown memory works with sticky facts strategy`() {
+    fun `markdown memory works with explicit sticky facts`() {
         val directory = Files.createTempDirectory("aichat-agent-memory-sticky-test")
         try {
             val repository = ChatHistoryRepository(systemPrompt = "system")
@@ -501,7 +429,6 @@ class DeepSeekAiAgentRequestBodyTest {
             val httpClient = RecordingHttpClient(
                 listOf(
                     assistantResponse("NO_CHANGES"),
-                    assistantResponse("project_goal: test memory"),
                     assistantResponse("final answer")
                 )
             )
@@ -509,8 +436,6 @@ class DeepSeekAiAgentRequestBodyTest {
                 historyRepository = repository,
                 initialSettings = AgentSettings(
                     apiKey = "key",
-                    contextStrategy = ContextStrategy.STICKY_FACTS,
-                    contextWindowMessages = 2,
                     summaryInterval = 0,
                     systemPrompt = "system"
                 ),
@@ -520,9 +445,9 @@ class DeepSeekAiAgentRequestBodyTest {
 
             agent.send("goal: test memory")
 
-            assertEquals(3, httpClient.requestBodies.size)
-            assertContains(httpClient.requestBodies[2], "Permanent memory instructions:")
-            assertContains(httpClient.requestBodies[2], "Sticky facts:")
+            assertEquals(2, httpClient.requestBodies.size)
+            assertContains(httpClient.requestBodies[1], "Permanent memory instructions:")
+            assertContains(httpClient.requestBodies[1], "Sticky facts:")
         } finally {
             directory.toFile().deleteRecursively()
         }

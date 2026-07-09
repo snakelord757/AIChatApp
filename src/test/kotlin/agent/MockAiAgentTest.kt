@@ -1,7 +1,6 @@
 package agent
 
 import chat.ChatHistoryRepository
-import chat.ContextStrategy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -25,14 +24,13 @@ class MockAiAgentTest {
     }
 
     @Test
-    fun `summary is saved for non summary context strategy when interval is positive`() {
+    fun `summary is saved when interval is positive`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         val agent = MockAiAgent(
             historyRepository = repository,
             initialSettings = AgentSettings(
                 apiKey = "",
                 summaryInterval = 1,
-                contextStrategy = ContextStrategy.STICKY_FACTS,
                 systemPrompt = "system"
             )
         )

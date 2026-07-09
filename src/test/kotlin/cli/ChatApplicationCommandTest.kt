@@ -5,7 +5,6 @@ import agent.AgentSettings
 import agent.AiAgent
 import agent.SummaryEvents
 import chat.ChatHistoryRepository
-import chat.ContextStrategy
 import chat.TokenUsage
 import invariants.InvariantRepository
 import invariants.InvariantStore
@@ -185,7 +184,7 @@ class ChatApplicationCommandTest {
     }
 
     @Test
-    fun `enabling sticky facts strategy prints composed markers`() {
+    fun `facts command prints composed sticky facts`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.addUser("goal: show facts")
 
@@ -194,7 +193,6 @@ class ChatApplicationCommandTest {
                 agent = RecordingAgent(),
                 initialSettings = AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
                     systemPrompt = "system"
                 ),
                 historyRepository = repository,
@@ -203,7 +201,7 @@ class ChatApplicationCommandTest {
                 showStartupWarning = false,
                 input = ConsoleInput(
                     BufferedReader(
-                        StringReader("/settings\nset contextStrategy facts\nback\n/exit\n")
+                        StringReader("/facts\n/exit\n")
                     )
                 )
             ).run()
@@ -214,7 +212,7 @@ class ChatApplicationCommandTest {
     }
 
     @Test
-    fun `sticky facts strategy prints markers after user message updates memory`() {
+    fun `facts command prints markers after user message updates memory`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
 
         val output = captureStdout {
@@ -222,7 +220,6 @@ class ChatApplicationCommandTest {
                 agent = RepositoryUpdatingAgent(repository),
                 initialSettings = AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.STICKY_FACTS,
                     systemPrompt = "system"
                 ),
                 historyRepository = repository,
@@ -231,7 +228,7 @@ class ChatApplicationCommandTest {
                 showStartupWarning = false,
                 input = ConsoleInput(
                     BufferedReader(
-                        StringReader("goal: show facts after message\n/exit\n")
+                        StringReader("goal: show facts after message\n/facts\n/exit\n")
                     )
                 )
             ).run()
@@ -242,7 +239,7 @@ class ChatApplicationCommandTest {
     }
 
     @Test
-    fun `sticky facts strategy prints markers even when memory is unchanged`() {
+    fun `facts command prints markers even when memory is unchanged`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.applyExtractedFacts("goal: show facts repeatedly")
 
@@ -251,7 +248,6 @@ class ChatApplicationCommandTest {
                 agent = RecordingAgent(),
                 initialSettings = AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.STICKY_FACTS,
                     systemPrompt = "system"
                 ),
                 historyRepository = repository,
@@ -260,18 +256,18 @@ class ChatApplicationCommandTest {
                 showStartupWarning = false,
                 input = ConsoleInput(
                     BufferedReader(
-                        StringReader("first\nsecond\n/exit\n")
+                        StringReader("first\nsecond\n/facts\n/exit\n")
                     )
                 )
             ).run()
         }
 
-        assertTrue(Regex("Sticky Facts").findAll(output).count() >= 3)
+        assertTrue(Regex("Sticky Facts").findAll(output).count() >= 1)
         assertContains(output, "goal: show facts repeatedly")
     }
 
     @Test
-    fun `sticky facts strategy prints facts request tokens after facts`() {
+    fun `facts command prints facts after usage update`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
 
         val output = captureStdout {
@@ -279,7 +275,6 @@ class ChatApplicationCommandTest {
                 agent = FactsUsageAgent(repository),
                 initialSettings = AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.STICKY_FACTS,
                     systemPrompt = "system"
                 ),
                 historyRepository = repository,
@@ -288,7 +283,7 @@ class ChatApplicationCommandTest {
                 showStartupWarning = false,
                 input = ConsoleInput(
                     BufferedReader(
-                        StringReader("remember\n/exit\n")
+                        StringReader("remember\n/facts\n/exit\n")
                     )
                 )
             ).run()
@@ -296,7 +291,6 @@ class ChatApplicationCommandTest {
 
         val factsBlock = output.substringAfter("Sticky Facts")
         assertContains(factsBlock, "goal: token accounting")
-        assertContains(factsBlock, "Tokens: input=5, output=2, reasoning=1, total=8")
     }
 
     @Test

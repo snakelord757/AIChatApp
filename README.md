@@ -16,8 +16,6 @@ MODEL_CONTEXT_WINDOW_TOKENS=1000000
 MODEL_TOKEN_PRICE_PER_1M_USD=
 AI_CHAT_SYSTEM_PROMPT=
 AI_CHAT_SUMMARY_INTERVAL=20
-AI_CHAT_CONTEXT_STRATEGY=sliding
-AI_CHAT_CONTEXT_WINDOW_MESSAGES=20
 AI_CHAT_ALLOW_CLARIFYING_QUESTIONS=false
 AI_CHAT_RAG_ENABLED=false
 AI_CHAT_RAG_OLLAMA_URL=http://localhost:11434
@@ -28,7 +26,7 @@ AI_CHAT_RAG_TOP_K=5
 
 `MODEL_API_KEY` is optional for local providers that do not require authentication. Available models are loaded from the provider's OpenAI-compatible `GET /models` endpoint each time `/models` is executed; use `/settings` and `set model <model-name>` to switch models without editing API keys.
 
-`MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, and `MODEL_CONTEXT_WINDOW_TOKENS` configure generation and limit classification for the connected model. `MODEL_MAX_TOKENS=0` omits `max_tokens` from chat completion requests.
+`MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, and `MODEL_CONTEXT_WINDOW_TOKENS` configure generation and the request context budget for the connected model. `MODEL_MAX_TOKENS=0` omits `max_tokens` from chat completion requests and reserves a default output budget locally when trimming history.
 
 `AI_CHAT_SYSTEM_PROMPT` is optional. When it is empty, regular chat messages use the default staged task pipeline. When it is set, regular chat messages bypass the staged pipeline and the model answers directly with that system prompt. The same behavior can be changed at runtime with `/settings`, `set systemPrompt <text>`, and `set systemPrompt default`.
 
@@ -161,18 +159,17 @@ System: MCP tool amiibo/search_amiibo completed. Result: ...
 
 ## Context Management
 
-AIChatApp supports two context strategies:
+AIChatApp uses the configured `MODEL_CONTEXT_WINDOW_TOKENS` value as the single context-window setting. The request context is assembled from the system prompt, memory/invariants, current summary, sticky facts, and recent dialog messages that fit the approximate token budget.
 
-- `sliding` sends the system prompt plus the latest context-window messages, with the current summary included when one exists.
-- `facts` asks the model to extract durable memory from the current sticky facts plus the latest `AI_CHAT_CONTEXT_WINDOW_MESSAGES` messages, stores the resulting key-value facts, then sends the system prompt, the current summary when one exists, the sticky facts system block, and the latest context-window messages.
+Sticky facts are collected from explicit message markers and, when the assembled request reaches `MODEL_CONTEXT_WINDOW_TOKENS`, from a silent internal extraction pass over recent chat messages. They are stored as durable key-value facts for later requests and are not shown automatically; use `/facts` to inspect them.
 
-Automatic summary creation is a base option, not a context strategy. It runs when `AI_CHAT_SUMMARY_INTERVAL` is greater than `0` and enough messages have accumulated in the active chat. Main chat and every branch keep their own independent summary. Disable automatic summaries with:
+Automatic summary creation runs when `AI_CHAT_SUMMARY_INTERVAL` is greater than `0` and enough messages have accumulated in the active chat. Main chat and every branch keep their own independent summary. Disable automatic summaries with:
 
 ```properties
 AI_CHAT_SUMMARY_INTERVAL=0
 ```
 
-In `/settings`, use `set contextStrategy <sliding|facts>`, `set contextWindow <number>`, and `set summaryInterval <number>`.
+In `/settings`, use `set modelContextWindow <tokens>` and `set summaryInterval <number>`.
 
 Clarifying questions are disabled by default. Enable them in `local.properties` only when you want the task orchestrator to ask the user for missing information before continuing:
 
@@ -225,7 +222,7 @@ Each task stage has its own stage-agent role:
 - `ValidationAgent`
 - `CompletionAgent`
 
-Stage agents keep their own message history. Their private stage history is not written into the shared chat history. The orchestrator owns shared chat history, permanent memory, personal memory, and working memory; stage agents receive only the user task, the previous stage result, accumulated stage summaries, clarifications approved by the orchestrator, and allowed working context. Context strategies such as `sliding` and `facts` are evaluated only by the orchestrator, which passes a prepared context snapshot to stage agents instead of exposing strategy settings or repositories to them.
+Stage agents keep their own message history. Their private stage history is not written into the shared chat history. The orchestrator owns shared chat history, permanent memory, personal memory, and working memory; stage agents receive only the user task, the previous stage result, accumulated stage summaries, clarifications approved by the orchestrator, and a prepared working-context snapshot trimmed to the configured model context window.
 
 Each stage returns a structured `StageResult` with the stage, success flag, summary, output, issues, requested changes or retry reason, and token usage when available. The orchestrator passes each result to the next legal stage and writes the final completion output into the public chat history.
 
@@ -237,9 +234,9 @@ When validation repeatedly fails, the task is paused instead of cycling forever 
 
 Stage-call diagnostics are stored separately as `task-stage-audit.jsonl` next to `chat-history.json`. This audit file records each stage prompt, raw response, parsed `StageResult`, attempt number, timestamp, and token usage without adding those messages to the public chat history or rendering them in normal chat output.
 
-Sticky facts can still be collected immediately from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. With the `facts` strategy enabled, the app also sends a small extraction prompt before the main assistant response so the model can turn natural user messages into stored facts.
+Sticky facts can be collected immediately from explicit message markers such as `goal:`, `constraint:`, `preference:`, `decision:`, and `agreement:`. When the context window is full, the standard chat flow also runs a silent sticky-facts extraction before the main assistant response.
 
-Branching is a chat feature, not a context strategy. Use `/checkpoint`, then `/branch create <name>` to create an independent continuation from that checkpoint or from the current dialog if no checkpoint exists. Use `/branch switch <name>` to enter a branch and `/branch switch main` to return to the main chat. Each branch keeps independent messages, sticky facts, and summary state. The selected context strategy and automatic summary option apply only to the active chat or branch.
+Branching is a chat feature. Use `/checkpoint`, then `/branch create <name>` to create an independent continuation from that checkpoint or from the current dialog if no checkpoint exists. Use `/branch switch <name>` to enter a branch and `/branch switch main` to return to the main chat. Each branch keeps independent messages, sticky facts, and summary state. The configured model context window and automatic summary option apply to the active chat or branch.
 
 ## Markdown Memory
 
@@ -300,9 +297,9 @@ Use these commands inside chat:
 
 Markdown memory belongs to the orchestrator and the main chat flow. Stage agents do not read permanent or personal memory directly and do not update user memory.
 
-Markdown memory is separate from sticky facts. Sticky facts are the existing key-value memory stored in `chat-history.json` and controlled by the `facts` context strategy. Markdown memory lives only in `.md` files and is used regardless of the selected context strategy.
+Markdown memory is separate from sticky facts. Sticky facts are the existing key-value memory stored in `chat-history.json`. Markdown memory lives only in `.md` files and is used by the standard chat context assembly and task orchestrator context provider.
 
-Token usage and cost from the internal personal-memory extraction request are intentionally not saved in chat history, not shown by `/summary`, and not included in `totalUsage()`. Only normal assistant, summary, and sticky-facts usage remain part of user-visible accounting.
+Token usage and cost from internal personal-memory extraction are intentionally not saved in chat history, not shown by `/summary`, and not included in `totalUsage()`. Silent sticky-facts extraction usage is included in aggregate usage but does not create a visible chat event.
 
 ## Assistant Invariants
 
@@ -312,7 +309,7 @@ Assistant invariants are non-negotiable rules stored separately from dialog, sti
 <app-dir>/invariants.md
 ```
 
-Use `/edit invariants` inside chat to create and open the file in the operating system's default text application. Invariants are included as a dedicated system block after the base system prompt and before Markdown memory for both `sliding` and `facts` context strategies. In orchestrated tasks, only `PlanningAgent` and `ValidationAgent` see invariants through the working context prepared by the orchestrator.
+Use `/edit invariants` inside chat to create and open the file in the operating system's default text application. Invariants are included as a dedicated system block after the base system prompt and before Markdown memory in the standard chat context. In orchestrated tasks, only `PlanningAgent` and `ValidationAgent` see invariants through the working context prepared by the orchestrator.
 
 ## JVM Distribution
 

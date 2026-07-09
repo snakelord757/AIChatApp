@@ -2,7 +2,6 @@ package agent
 
 import chat.ChatHistoryRepository
 import chat.ChatMessage
-import chat.ContextStrategy
 import chat.Role
 import invariants.InvariantRepository
 import memory.MemoryRepository
@@ -49,12 +48,6 @@ class DeepSeekAiAgent(
             memoryRepository?.reinforcePersonalSignals(userMessage)
             requestPersonalMemoryUpdate()
 
-            if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
-                requestFacts()?.let { response ->
-                    historyRepository.applyExtractedFacts(response.content, response.usage)
-                }
-            }
-
             if (settings.summaryInterval > 0 &&
                 historyRepository.shouldCreateSummary(settings.summaryInterval)
             ) {
@@ -71,7 +64,22 @@ class DeepSeekAiAgent(
         }
 
         val extraSystemContext = if (settings.systemPromptOverridden) emptyList() else extraSystemContextMessages()
-        val requestContext = historyRepository.apiContextMessages(settings, extraSystemContext)
+        if (!settings.systemPromptOverridden &&
+            historyRepository.isModelContextWindowReached(
+                settings = settings,
+                memoryMessages = extraSystemContext,
+                includeDerivedContext = true
+            )
+        ) {
+            requestFacts()?.let { response ->
+                historyRepository.applyExtractedFacts(response.content, response.usage, recordEvent = false)
+            }
+        }
+        val requestContext = historyRepository.apiContextMessages(
+            settings = settings,
+            memoryMessages = extraSystemContext,
+            includeDerivedContext = !settings.systemPromptOverridden
+        )
         val response = sendRequest(buildRequest(requestContext, settings))
         val firstAnswer = JsonTools.extractAssistantContent(response.body())
             ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
@@ -183,7 +191,7 @@ class DeepSeekAiAgent(
             buildRequest(
                 factExtractionMessages(
                     existingFacts = historyRepository.facts(),
-                    sourceMessages = historyRepository.factsSourceMessages(settings.contextWindowMessages)
+                    sourceMessages = historyRepository.factsSourceMessages(settings)
                 ),
                 settings
             )
@@ -341,7 +349,7 @@ class DeepSeekAiAgent(
         sourceMessages: List<ChatMessage>
     ): List<ChatMessage> {
         val prompt = """
-            Extract durable sticky facts from the recent chat messages for future chat context.
+            Extract durable sticky facts from recent chat messages because the conversation is reaching the configured model context window.
             Keep only stable goals, constraints, preferences, decisions, agreements, names, project details, and other facts useful later.
             Do not answer the user.
             Return only lines in the format key: value.

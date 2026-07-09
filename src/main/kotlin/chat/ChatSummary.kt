@@ -42,5 +42,5 @@ internal fun summaryUsageMessage(usage: TokenUsage?): String {
 
 internal fun factsUsageMessage(usage: TokenUsage?): String {
     val safeUsage = usage ?: TokenUsage.ZERO
-    return "Sticky facts extraction completed. Facts request tokens: input=${safeUsage.inputTokens}, output=${safeUsage.outputTokens}, reasoning=${safeUsage.reasoningTokens}, total=${safeUsage.totalTokens}"
+    return "Sticky facts update completed. Facts usage: input=${safeUsage.inputTokens}, output=${safeUsage.outputTokens}, reasoning=${safeUsage.reasoningTokens}, total=${safeUsage.totalTokens}"
 }

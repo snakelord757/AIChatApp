@@ -8,7 +8,6 @@ import agent.ModelCatalogClient
 import agent.ResponseLimitReason
 import agent.SummaryEvents
 import chat.ChatHistoryRepository
-import chat.ContextStrategy
 import config.TokenPricing
 import formatting.ConsoleScreen
 import invariants.InvariantRepository
@@ -80,7 +79,6 @@ class ChatApplication(
         }
         render { renderer.renderHistory(historyRepository.all(), summarizeEvents = true) }
         render { renderer.renderTaskState(taskOrchestrator?.currentState()) }
-        renderStickyFactsIfNeeded()
         scheduledTaskManager?.startPersistedTasks()
 
         try {
@@ -137,7 +135,6 @@ class ChatApplication(
                         onSettingsChanged(settings)
                         historyRepository.updateSystemPrompt(settings.systemPrompt)
                         render { renderer.renderSystem("Returned to chat. History is saved.") }
-                        renderStickyFactsIfNeeded()
                     }
                     userInput == "/mcp" -> {
                         mcpScreen.open()
@@ -284,7 +281,6 @@ class ChatApplication(
                     render { renderer.renderGreeting() }
                     render { renderer.renderSystem("Switched to branch: ${parts[2]}") }
                     render { renderer.renderHistory(historyRepository.all(), summarizeEvents = true) }
-                    renderStickyFactsIfNeeded()
                 } else {
                     render { renderer.renderError("Branch not found: ${parts[2]}") }
                 }
@@ -429,13 +425,10 @@ class ChatApplication(
             if (taskOrchestrator?.currentState()?.lifecycleStatus != TaskLifecycleStatus.PAUSED) {
                 memoryRepository?.setWorkingStatus(TaskStatus.DONE)
             }
-            renderStickyFactsIfNeeded()
         } catch (exception: AgentException) {
             render { renderer.renderError(exception.message ?: "Could not get an assistant response.") }
-            renderStickyFactsIfNeeded()
         } catch (exception: RuntimeException) {
             render { renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}") }
-            renderStickyFactsIfNeeded()
         }
     }
 
@@ -480,20 +473,16 @@ class ChatApplication(
                 renderer.renderCost(response.usage, pricing)
             }
             memoryRepository?.setWorkingStatus(TaskStatus.DONE)
-            renderStickyFactsIfNeeded(background = true)
         } catch (exception: AgentException) {
             renderBackground { renderer.renderError(exception.message ?: "Could not get an assistant response.") }
-            renderStickyFactsIfNeeded(background = true)
         } catch (exception: RuntimeException) {
             renderBackground { renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}") }
-            renderStickyFactsIfNeeded(background = true)
         } catch (exception: Exception) {
             if (isExpectedTaskShutdown(exception)) {
                 renderBackground { renderer.renderSystem("Task paused.") }
             } else {
                 renderBackground { renderer.renderError("Unexpected error: ${exception.message ?: exception::class.simpleName}") }
             }
-            renderStickyFactsIfNeeded(background = true)
         } finally {
             activeTaskThread = null
         }
@@ -511,25 +500,6 @@ class ChatApplication(
             current = current.cause
         }
         return false
-    }
-
-    private fun renderStickyFactsIfNeeded(background: Boolean = false) {
-        if (settings.contextStrategy != ContextStrategy.STICKY_FACTS) return
-        val facts = historyRepository.facts()
-        if (facts.isEmpty()) return
-        val block: () -> Unit = {
-            renderer.renderFacts(facts)
-            historyRepository.lastFactsUsage()?.let { usage ->
-                renderer.renderUsage(usage)
-                renderer.renderCost(usage, pricing)
-            }
-            Unit
-        }
-        if (background) {
-            renderBackground(block)
-        } else {
-            render(block)
-        }
     }
 
     private fun isTaskRunning(): Boolean = activeTaskThread?.isAlive == true

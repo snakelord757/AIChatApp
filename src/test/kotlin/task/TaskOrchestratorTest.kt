@@ -2,7 +2,6 @@ package task
 
 import chat.ChatHistoryRepository
 import agent.AgentSettings
-import chat.ContextStrategy
 import invariants.InvariantRepository
 import invariants.InvariantStore
 import memory.MemoryRepository
@@ -300,7 +299,7 @@ class TaskOrchestratorTest {
     }
 
     @Test
-    fun `context strategy is applied by orchestrator context provider only`() {
+    fun `prepared context is applied by orchestrator context provider only`() {
         val directory = Files.createTempDirectory("aichat-orchestrator-context-test")
         try {
             val history = ChatHistoryRepository(systemPrompt = "system")
@@ -317,9 +316,7 @@ class TaskOrchestratorTest {
                     settingsProvider = {
                         AgentSettings(
                             apiKey = "",
-                            systemPrompt = "system",
-                            contextStrategy = ContextStrategy.STICKY_FACTS,
-                            contextWindowMessages = 1
+                            systemPrompt = "system"
                         )
                     },
                     historyRepository = history,
@@ -353,9 +350,7 @@ class TaskOrchestratorTest {
                     settingsProvider = {
                         AgentSettings(
                             apiKey = "",
-                            systemPrompt = "system",
-                            contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                            contextWindowMessages = 10
+                            systemPrompt = "system"
                         )
                     },
                     historyRepository = history,

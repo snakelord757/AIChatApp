@@ -196,23 +196,21 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `sliding window strategy sends only last dialog messages plus system prompt`() {
+    fun `model context window sends recent dialog messages plus system prompt`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("one")
-        repository.addAssistant("two")
+        repository.addUser("one ".repeat(3_000))
+        repository.addAssistant("two ".repeat(3_000))
         repository.addUser("three")
 
         assertEquals(
             listOf(
                 ChatMessage(Role.SYSTEM, "system"),
-                ChatMessage(Role.ASSISTANT, "two"),
                 ChatMessage(Role.USER, "three")
             ),
             repository.apiContextMessages(
                 AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                    contextWindowMessages = 2,
+                    modelContextWindowTokens = 1_100,
                     systemPrompt = "system"
                 )
             )
@@ -220,7 +218,7 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `sliding window strategy includes summary as base context when available`() {
+    fun `context includes summary as base context when available`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.addUser("old")
         repository.addAssistant("old answer")
@@ -236,8 +234,6 @@ class ChatHistoryRepositoryTest {
             repository.apiContextMessages(
                 AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                    contextWindowMessages = 4,
                     systemPrompt = "system"
                 )
             )
@@ -245,17 +241,16 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `sticky facts strategy sends facts block plus sliding dialog window`() {
+    fun `context sends facts block plus recent dialog window`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("goal: ship context strategies")
+        repository.addUser("goal: ship token context")
         repository.addAssistant("noted")
         repository.addUser("latest")
 
         val context = repository.apiContextMessages(
             AgentSettings(
                 apiKey = "",
-                contextStrategy = ContextStrategy.STICKY_FACTS,
-                contextWindowMessages = 1,
+                modelContextWindowTokens = 1_100,
                 systemPrompt = "system"
             )
         )
@@ -263,22 +258,20 @@ class ChatHistoryRepositoryTest {
         assertEquals(Role.SYSTEM, context[0].role)
         assertEquals(Role.SYSTEM, context[1].role)
         assertContains(context[1].content, "Sticky facts:")
-        assertContains(context[1].content, "goal: ship context strategies")
+        assertContains(context[1].content, "goal: ship token context")
         assertEquals(listOf(ChatMessage(Role.USER, "latest")), context.drop(2))
     }
 
     @Test
-    fun `sticky facts strategy includes summary before facts when available`() {
+    fun `context includes summary before facts when available`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("goal: ship context strategies")
+        repository.addUser("goal: ship token context")
         repository.saveSummary("compressed old dialog", TokenUsage.ZERO)
         repository.addUser("latest")
 
         val context = repository.apiContextMessages(
             AgentSettings(
                 apiKey = "",
-                contextStrategy = ContextStrategy.STICKY_FACTS,
-                contextWindowMessages = 1,
                 systemPrompt = "system"
             )
         )
@@ -290,7 +283,7 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `memory messages are inserted after base system prompt before strategy context`() {
+    fun `memory messages are inserted after base system prompt before derived context`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.addUser("goal: keep facts")
         repository.saveSummary("compressed old dialog", TokenUsage.ZERO)
@@ -299,8 +292,6 @@ class ChatHistoryRepositoryTest {
         val context = repository.apiContextMessages(
             AgentSettings(
                 apiKey = "",
-                contextStrategy = ContextStrategy.STICKY_FACTS,
-                contextWindowMessages = 1,
                 systemPrompt = "system"
             ),
             memoryMessages = listOf(ChatMessage(Role.SYSTEM, "Permanent memory instructions:\nRule."))
@@ -377,7 +368,7 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `facts extraction usage is included in total usage and excluded from api context`() {
+    fun `facts update usage is included in total usage and excluded from api context`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
 
         repository.applyExtractedFacts(
@@ -387,24 +378,8 @@ class ChatHistoryRepositoryTest {
 
         assertEquals(TokenUsage(inputTokens = 7, outputTokens = 3, reasoningTokens = 2), repository.totalUsage())
         assertEquals(TokenUsage(inputTokens = 7, outputTokens = 3, reasoningTokens = 2), repository.lastFactsUsage())
-        assertEquals(true, repository.all().any { it.role == Role.EVENT && it.content.contains("Facts request tokens") })
+        assertEquals(true, repository.all().any { it.role == Role.EVENT && it.content.contains("Facts usage") })
         assertEquals(false, repository.apiContextMessages().any { it.role == Role.EVENT })
-    }
-
-    @Test
-    fun `facts source messages use last N dialog messages`() {
-        val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("one")
-        repository.addAssistant("two")
-        repository.addUser("three")
-
-        assertEquals(
-            listOf(
-                ChatMessage(Role.ASSISTANT, "two"),
-                ChatMessage(Role.USER, "three")
-            ),
-            repository.factsSourceMessages(window = 2)
-        )
     }
 
     @Test
@@ -429,8 +404,6 @@ class ChatHistoryRepositoryTest {
             repository.apiContextMessages(
                 AgentSettings(
                     apiKey = "",
-                    contextStrategy = ContextStrategy.SLIDING_WINDOW,
-                    contextWindowMessages = 10,
                     systemPrompt = "system"
                 )
             )
@@ -537,7 +510,7 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
-    fun `sticky facts context uses active branch facts only`() {
+    fun `context uses active branch facts only`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.applyExtractedFacts("goal: main goal")
         repository.addUser("main message")
@@ -550,8 +523,6 @@ class ChatHistoryRepositoryTest {
         val context = repository.apiContextMessages(
             AgentSettings(
                 apiKey = "",
-                contextStrategy = ContextStrategy.STICKY_FACTS,
-                contextWindowMessages = 3,
                 systemPrompt = "system"
             )
         )

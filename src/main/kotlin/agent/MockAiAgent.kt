@@ -1,7 +1,6 @@
 package agent
 
 import chat.ChatHistoryRepository
-import chat.ContextStrategy
 import chat.TokenUsage
 import invariants.InvariantRepository
 import memory.MemoryRepository
@@ -19,9 +18,6 @@ class MockAiAgent(
         invariantRepository?.contextMessages()
         memoryRepository?.contextMessages()
         memoryRepository?.reinforcePersonalSignals(userMessage)
-        if (settings.contextStrategy == ContextStrategy.STICKY_FACTS) {
-            historyRepository.applyExtractedFacts("latest_user_prompt: $userMessage", TokenUsage.ZERO)
-        }
         if (settings.summaryInterval > 0 &&
             historyRepository.shouldCreateSummary(settings.summaryInterval)
         ) {
