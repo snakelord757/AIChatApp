@@ -218,6 +218,23 @@ class ChatHistoryRepositoryTest {
     }
 
     @Test
+    fun `sticky facts compaction uses reported model input tokens before the local window is full`() {
+        val repository = ChatHistoryRepository(systemPrompt = "system")
+        repository.addUser("first")
+        repository.addAssistant("answer")
+        repository.recordModelInputTokens(1_040)
+        repository.addUser("next")
+
+        assertEquals(
+            true,
+            repository.shouldCompressWithStickyFacts(
+                settings = AgentSettings(apiKey = "", modelContextWindowTokens = 1_100, systemPrompt = "system"),
+                memoryMessages = emptyList()
+            )
+        )
+    }
+
+    @Test
     fun `context includes summary as base context when available`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
         repository.addUser("old")

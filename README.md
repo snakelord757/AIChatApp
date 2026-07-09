@@ -26,7 +26,7 @@ AI_CHAT_RAG_TOP_K=5
 
 `MODEL_API_KEY` is optional for local providers that do not require authentication. Available models are loaded from the provider's OpenAI-compatible `GET /models` endpoint each time `/models` is executed; use `/settings` and `set model <model-name>` to switch models without editing API keys.
 
-`MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, and `MODEL_CONTEXT_WINDOW_TOKENS` configure generation for the connected model. `MODEL_CONTEXT_WINDOW_TOKENS` is sent to the provider as `options.num_ctx` and is also used locally as the request context budget. `MODEL_MAX_TOKENS=0` omits `max_tokens` from chat completion requests and reserves a default output budget locally when trimming history.
+`MODEL_TEMPERATURE`, `MODEL_MAX_TOKENS`, and `MODEL_CONTEXT_WINDOW_TOKENS` configure generation for the connected model. `MODEL_CONTEXT_WINDOW_TOKENS` is sent to the provider as `options.num_ctx` and is also used locally as the request context budget. After every main model response, the app stores the reported `prompt_tokens` for the active chat or branch and uses it to track local context occupancy. `MODEL_MAX_TOKENS=0` omits `max_tokens` from chat completion requests and reserves a default output budget locally when trimming history.
 
 `AI_CHAT_SYSTEM_PROMPT` is optional. When it is empty, regular chat messages use the default staged task pipeline. When it is set, regular chat messages bypass the staged pipeline and the model answers directly with that system prompt. The same behavior can be changed at runtime with `/settings`, `set systemPrompt <text>`, and `set systemPrompt default`.
 
@@ -161,7 +161,7 @@ System: MCP tool amiibo/search_amiibo completed. Result: ...
 
 AIChatApp uses the configured `MODEL_CONTEXT_WINDOW_TOKENS` value as the single context-window setting. It is sent to the model provider as `options.num_ctx`; the same value is used locally to assemble the request context from the system prompt, memory/invariants, current summary, sticky facts, and recent dialog messages that fit the approximate token budget.
 
-Sticky facts are collected from explicit message markers and, when the assembled request reaches `MODEL_CONTEXT_WINDOW_TOKENS`, from a silent internal extraction pass over recent chat messages. They are stored as durable key-value facts for later requests and are not shown automatically; use `/facts` to inspect them.
+Sticky facts are collected from explicit message markers and, when the locally tracked context reaches 95% of `MODEL_CONTEXT_WINDOW_TOKENS`, from a silent internal extraction pass over recent chat messages. The extraction happens before the next main request; that request is rebuilt with the sticky facts and the history that fits the configured context window. Facts are stored as durable key-value facts and are not shown automatically; use `/facts` to inspect them.
 
 Automatic summary creation runs when `AI_CHAT_SUMMARY_INTERVAL` is greater than `0` and enough messages have accumulated in the active chat. Main chat and every branch keep their own independent summary. Disable automatic summaries with:
 

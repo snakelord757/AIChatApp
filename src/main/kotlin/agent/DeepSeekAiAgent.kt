@@ -64,11 +64,10 @@ class DeepSeekAiAgent(
         }
 
         val extraSystemContext = if (settings.systemPromptOverridden) emptyList() else extraSystemContextMessages()
-        if (!settings.systemPromptOverridden &&
-            historyRepository.isModelContextWindowReached(
+        if (historyRepository.shouldCompressWithStickyFacts(
                 settings = settings,
                 memoryMessages = extraSystemContext,
-                includeDerivedContext = true
+                includeDerivedContext = !settings.systemPromptOverridden
             )
         ) {
             requestFacts()?.let { response ->
@@ -78,7 +77,7 @@ class DeepSeekAiAgent(
         val requestContext = historyRepository.apiContextMessages(
             settings = settings,
             memoryMessages = extraSystemContext,
-            includeDerivedContext = !settings.systemPromptOverridden
+            includeDerivedContext = true
         )
         val response = sendRequest(buildRequest(requestContext, settings))
         val firstAnswer = JsonTools.extractAssistantContent(response.body())
@@ -112,7 +111,8 @@ class DeepSeekAiAgent(
         }
         val answer = JsonTools.extractAssistantContent(finalResponse.body())
             ?: throw AgentException("The model provider returned an empty or unexpected JSON response.")
-        val usage = firstUsage + if (finalResponse == response) chat.TokenUsage.ZERO else JsonTools.extractUsage(finalResponse.body())
+        val finalUsage = if (finalResponse == response) firstUsage else JsonTools.extractUsage(finalResponse.body())
+        val usage = firstUsage + if (finalResponse == response) chat.TokenUsage.ZERO else finalUsage
         val finishReason = JsonTools.extractFinishReason(finalResponse.body())
         val limitReason = ResponseLimitClassifier.classify(
             finishReason = finishReason,
@@ -120,6 +120,7 @@ class DeepSeekAiAgent(
             usage = usage
         )
         historyRepository.addAssistant(answer, usage)
+        historyRepository.recordModelInputTokens(finalUsage.inputTokens)
         return AgentResponse(answer, usage, finishReason, limitReason)
     }
 
@@ -154,6 +155,7 @@ class DeepSeekAiAgent(
             usage = usage
         )
         historyRepository.addAssistant(content, usage)
+        historyRepository.recordModelInputTokens(usage.inputTokens)
         return AgentResponse(content, usage, finishReason, limitReason)
     }
 

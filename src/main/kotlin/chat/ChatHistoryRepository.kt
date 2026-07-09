@@ -14,6 +14,7 @@ class ChatHistoryRepository(
     restoredBranches: List<ChatBranch> = emptyList(),
     restoredActiveBranchId: String? = null,
     restoredCheckpoint: ChatCheckpoint? = null,
+    restoredLastModelInputTokens: Long = 0,
     private val onChanged: (ChatHistoryState) -> Unit = {}
 ) {
     private val messages = mutableListOf<ChatMessage>()
@@ -24,12 +25,14 @@ class ChatHistoryRepository(
     private val branches = mutableListOf<ChatBranch>()
     private var activeBranchId: String? = restoredActiveBranchId
     private var checkpoint: ChatCheckpoint? = restoredCheckpoint
+    private var lastModelInputTokens: Long = restoredLastModelInputTokens
 
     private companion object {
         const val TOKEN_CHARS_APPROXIMATION = 4
         const val MESSAGE_OVERHEAD_TOKENS = 8
         const val DEFAULT_RESPONSE_RESERVE_TOKENS = 4_096L
         const val MIN_REQUEST_CONTEXT_TOKENS = 1_024L
+        const val STICKY_FACTS_THRESHOLD_PERCENT = 95L
     }
 
     init {
@@ -57,7 +60,8 @@ class ChatHistoryRepository(
         lastFactsUsage = lastFactsUsage,
         branches = branches.toList(),
         activeBranchId = activeBranchId,
-        checkpoint = checkpoint
+        checkpoint = checkpoint,
+        lastModelInputTokens = lastModelInputTokens
     )
 
     @Synchronized
@@ -138,17 +142,33 @@ class ChatHistoryRepository(
 
     fun lastFactsUsage(): TokenUsage? = activeLastFactsUsage()
 
-    fun isModelContextWindowReached(
+    fun shouldCompressWithStickyFacts(
         settings: AgentSettings,
         memoryMessages: List<ChatMessage>,
         includeDerivedContext: Boolean = true
     ): Boolean {
+        val threshold = settings.modelContextWindowTokens * STICKY_FACTS_THRESHOLD_PERCENT / 100
+        val recordedInputTokens = activeLastModelInputTokens()
+        if (recordedInputTokens > 0L) {
+            val source = activeMessages()
+            val lastAssistantIndex = source.indexOfLast { it.role == Role.ASSISTANT }
+            val tokensAddedSinceLastResponse = source
+                .drop(lastAssistantIndex.coerceAtLeast(0))
+                .filter { it.role == Role.USER || it.role == Role.ASSISTANT }
+                .sumOf { it.estimatedTokens() }
+            return recordedInputTokens + tokensAddedSinceLastResponse >= threshold
+        }
+
         val fixedMessages = contextPrefix(memoryMessages, includeDerivedContext)
         val tailMessages = lastDialogMessages(activeSummaryTailMessages())
-        val requestBudget = requestContextBudget(settings.modelContextWindowTokens, settings.responseReserveTokens())
-        val requiredTokens = fixedMessages.sumOf { it.estimatedTokens() } +
-            tailMessages.sumOf { it.estimatedTokens() }
-        return requiredTokens >= requestBudget
+        return fixedMessages.sumOf { it.estimatedTokens() } +
+            tailMessages.sumOf { it.estimatedTokens() } >= threshold
+    }
+
+    @Synchronized
+    fun recordModelInputTokens(inputTokens: Long) {
+        setActiveLastModelInputTokens(inputTokens.coerceAtLeast(0))
+        persist()
     }
 
     fun factsSourceMessages(settings: AgentSettings): List<ChatMessage> =
@@ -189,7 +209,8 @@ class ChatHistoryRepository(
             activeSummary(),
             activeFacts(),
             activeFactsUsage(),
-            activeLastFactsUsage()
+            activeLastFactsUsage(),
+            activeLastModelInputTokens()
         )
         persist()
     }
@@ -205,7 +226,8 @@ class ChatHistoryRepository(
             summary = checkpoint?.summary ?: activeSummary(),
             facts = checkpoint?.facts ?: activeFacts(),
             factsUsage = checkpoint?.factsUsage ?: activeFactsUsage(),
-            lastFactsUsage = checkpoint?.lastFactsUsage ?: activeLastFactsUsage()
+            lastFactsUsage = checkpoint?.lastFactsUsage ?: activeLastFactsUsage(),
+            lastModelInputTokens = checkpoint?.lastModelInputTokens ?: activeLastModelInputTokens()
         )
         branches += branch
         activeBranchId = branch.id
@@ -258,6 +280,7 @@ class ChatHistoryRepository(
         facts.clear()
         factsUsage = TokenUsage.ZERO
         lastFactsUsage = null
+        lastModelInputTokens = 0
         branches.clear()
         activeBranchId = null
         checkpoint = null
@@ -304,6 +327,11 @@ class ChatHistoryRepository(
     private fun activeLastFactsUsage(): TokenUsage? {
         val branchId = activeBranchId ?: return lastFactsUsage
         return branches.firstOrNull { it.id == branchId }?.lastFactsUsage
+    }
+
+    private fun activeLastModelInputTokens(): Long {
+        val branchId = activeBranchId ?: return lastModelInputTokens
+        return branches.firstOrNull { it.id == branchId }?.lastModelInputTokens ?: 0
     }
 
     private fun setActiveSummary(newSummary: ChatSummary?) {
@@ -366,6 +394,21 @@ class ChatHistoryRepository(
             return
         }
         branches[index] = branches[index].copy(lastFactsUsage = usage)
+    }
+
+    private fun setActiveLastModelInputTokens(inputTokens: Long) {
+        val branchId = activeBranchId
+        if (branchId == null) {
+            lastModelInputTokens = inputTokens
+            return
+        }
+        val index = branches.indexOfFirst { it.id == branchId }
+        if (index < 0) {
+            activeBranchId = null
+            lastModelInputTokens = inputTokens
+            return
+        }
+        branches[index] = branches[index].copy(lastModelInputTokens = inputTokens)
     }
 
     private fun appendMessage(message: ChatMessage) {
@@ -547,6 +590,7 @@ fun ChatHistoryRepository(
         restoredBranches = restoredState.branches,
         restoredActiveBranchId = restoredState.activeBranchId,
         restoredCheckpoint = restoredState.checkpoint,
+        restoredLastModelInputTokens = restoredState.lastModelInputTokens,
         onChanged = onChanged
     )
 }

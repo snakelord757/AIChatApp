@@ -205,6 +205,7 @@ class ChatHistoryStoreTest {
             facts = mapOf("goal" to "\u0446\u0435\u043b\u044c"),
             factsUsage = TokenUsage(inputTokens = 1, outputTokens = 2, reasoningTokens = 3),
             lastFactsUsage = TokenUsage(inputTokens = 2, outputTokens = 3, reasoningTokens = 4),
+            lastModelInputTokens = 101,
             branches = listOf(
                 ChatBranch(
                     id = "branch-1",
@@ -213,7 +214,8 @@ class ChatHistoryStoreTest {
                     summary = ChatSummary("branch summary", lastMessageIndex = 0),
                     facts = mapOf("branch_goal" to "\u0432\u0435\u0442\u043a\u0430"),
                     factsUsage = TokenUsage(inputTokens = 4, outputTokens = 5, reasoningTokens = 6),
-                    lastFactsUsage = TokenUsage(inputTokens = 5, outputTokens = 6, reasoningTokens = 7)
+                    lastFactsUsage = TokenUsage(inputTokens = 5, outputTokens = 6, reasoningTokens = 7),
+                    lastModelInputTokens = 202
                 )
             ),
             activeBranchId = "branch-1",
@@ -222,7 +224,8 @@ class ChatHistoryStoreTest {
                 summary = ChatSummary("checkpoint summary", lastMessageIndex = 0),
                 facts = mapOf("checkpoint_goal" to "checkpoint"),
                 factsUsage = TokenUsage(inputTokens = 7, outputTokens = 8, reasoningTokens = 9),
-                lastFactsUsage = TokenUsage(inputTokens = 8, outputTokens = 9, reasoningTokens = 10)
+                lastFactsUsage = TokenUsage(inputTokens = 8, outputTokens = 9, reasoningTokens = 10),
+                lastModelInputTokens = 303
             )
         )
 

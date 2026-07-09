@@ -11,7 +11,8 @@ internal object ChatHistoryJson {
             "  \"lastFactsUsage\": ${encodeNullableUsage(state.lastFactsUsage)},\n" +
             "  \"branches\": ${encodeBranches(state.branches)},\n" +
             "  \"activeBranchId\": ${state.activeBranchId?.let { "\"${escape(it)}\"" } ?: "null"},\n" +
-            "  \"checkpoint\": ${state.checkpoint?.let(::encodeCheckpoint) ?: "null"}\n" +
+            "  \"checkpoint\": ${state.checkpoint?.let(::encodeCheckpoint) ?: "null"},\n" +
+            "  \"lastModelInputTokens\": ${state.lastModelInputTokens}\n" +
             "}"
     }
 
@@ -37,13 +38,13 @@ internal object ChatHistoryJson {
 
     private fun encodeBranches(branches: List<ChatBranch>): String {
         val body = branches.joinToString(separator = ",\n") { branch ->
-            """  {"id":"${escape(branch.id)}","name":"${escape(branch.name)}","messages":${encodeMessages(branch.messages)},"summary":${encodeNullableSummary(branch.summary)},"facts":${encodeFacts(branch.facts)},"factsUsage":${encodeUsage(branch.factsUsage)},"lastFactsUsage":${encodeNullableUsage(branch.lastFactsUsage)}}"""
+            """  {"id":"${escape(branch.id)}","name":"${escape(branch.name)}","messages":${encodeMessages(branch.messages)},"summary":${encodeNullableSummary(branch.summary)},"facts":${encodeFacts(branch.facts)},"factsUsage":${encodeUsage(branch.factsUsage)},"lastFactsUsage":${encodeNullableUsage(branch.lastFactsUsage)},"lastModelInputTokens":${branch.lastModelInputTokens}}"""
         }
         return "[\n$body\n]"
     }
 
     private fun encodeCheckpoint(checkpoint: ChatCheckpoint): String =
-        """{"messages":${encodeMessages(checkpoint.messages)},"summary":${encodeNullableSummary(checkpoint.summary)},"facts":${encodeFacts(checkpoint.facts)},"factsUsage":${encodeUsage(checkpoint.factsUsage)},"lastFactsUsage":${encodeNullableUsage(checkpoint.lastFactsUsage)}}"""
+        """{"messages":${encodeMessages(checkpoint.messages)},"summary":${encodeNullableSummary(checkpoint.summary)},"facts":${encodeFacts(checkpoint.facts)},"factsUsage":${encodeUsage(checkpoint.factsUsage)},"lastFactsUsage":${encodeNullableUsage(checkpoint.lastFactsUsage)},"lastModelInputTokens":${checkpoint.lastModelInputTokens}}"""
 
     private fun encodeNullableSummary(summary: ChatSummary?): String {
         if (summary == null) return "null"
@@ -136,6 +137,7 @@ internal object ChatHistoryJson {
             var branches: List<ChatBranch> = emptyList()
             var activeBranchId: String? = null
             var checkpoint: ChatCheckpoint? = null
+            var lastModelInputTokens = 0L
 
             expect('{')
             skipWhitespace()
@@ -159,6 +161,7 @@ internal object ChatHistoryJson {
                     "branches" -> branches = parseBranches()
                     "activeBranchId" -> activeBranchId = parseNullableString()
                     "checkpoint" -> checkpoint = parseNullableCheckpoint()
+                    "lastModelInputTokens" -> lastModelInputTokens = parseNumber()
                     else -> skipValue()
                 }
                 skipWhitespace()
@@ -179,7 +182,8 @@ internal object ChatHistoryJson {
                             lastFactsUsage = lastFactsUsage,
                             branches = branches,
                             activeBranchId = activeBranchId,
-                            checkpoint = checkpoint
+                            checkpoint = checkpoint,
+                            lastModelInputTokens = lastModelInputTokens
                         )
                     }
                     else -> error("Expected ',' or '}'")
@@ -251,6 +255,7 @@ internal object ChatHistoryJson {
             var facts: Map<String, String> = emptyMap()
             var factsUsage = TokenUsage.ZERO
             var lastFactsUsage: TokenUsage? = null
+            var lastModelInputTokens = 0L
 
             expect('{')
             skipWhitespace()
@@ -269,6 +274,7 @@ internal object ChatHistoryJson {
                     "facts" -> facts = parseFacts()
                     "factsUsage" -> factsUsage = parseUsage()
                     "lastFactsUsage" -> lastFactsUsage = parseNullableUsage()
+                    "lastModelInputTokens" -> lastModelInputTokens = parseNumber()
                     else -> skipValue()
                 }
                 skipWhitespace()
@@ -286,7 +292,8 @@ internal object ChatHistoryJson {
                             summary,
                             facts,
                             factsUsage,
-                            lastFactsUsage
+                            lastFactsUsage,
+                            lastModelInputTokens
                         )
                     }
                     else -> error("Expected ',' or '}'")
@@ -306,6 +313,7 @@ internal object ChatHistoryJson {
             var facts: Map<String, String> = emptyMap()
             var factsUsage = TokenUsage.ZERO
             var lastFactsUsage: TokenUsage? = null
+            var lastModelInputTokens = 0L
 
             expect('{')
             skipWhitespace()
@@ -325,6 +333,7 @@ internal object ChatHistoryJson {
                     "facts" -> facts = parseFacts()
                     "factsUsage" -> factsUsage = parseUsage()
                     "lastFactsUsage" -> lastFactsUsage = parseNullableUsage()
+                    "lastModelInputTokens" -> lastModelInputTokens = parseNumber()
                     else -> skipValue()
                 }
                 skipWhitespace()
@@ -335,7 +344,7 @@ internal object ChatHistoryJson {
                     }
                     '}' -> {
                         index++
-                        return ChatCheckpoint(messages, summary, facts, factsUsage, lastFactsUsage)
+                        return ChatCheckpoint(messages, summary, facts, factsUsage, lastFactsUsage, lastModelInputTokens)
                     }
                     else -> error("Expected ',' or '}'")
                 }

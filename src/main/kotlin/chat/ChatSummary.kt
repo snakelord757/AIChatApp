@@ -14,7 +14,8 @@ data class ChatHistoryState(
     val lastFactsUsage: TokenUsage? = null,
     val branches: List<ChatBranch> = emptyList(),
     val activeBranchId: String? = null,
-    val checkpoint: ChatCheckpoint? = null
+    val checkpoint: ChatCheckpoint? = null,
+    val lastModelInputTokens: Long = 0
 )
 
 data class ChatBranch(
@@ -24,7 +25,8 @@ data class ChatBranch(
     val summary: ChatSummary? = null,
     val facts: Map<String, String> = emptyMap(),
     val factsUsage: TokenUsage = TokenUsage.ZERO,
-    val lastFactsUsage: TokenUsage? = null
+    val lastFactsUsage: TokenUsage? = null,
+    val lastModelInputTokens: Long = 0
 )
 
 data class ChatCheckpoint(
@@ -32,7 +34,8 @@ data class ChatCheckpoint(
     val summary: ChatSummary? = null,
     val facts: Map<String, String> = emptyMap(),
     val factsUsage: TokenUsage = TokenUsage.ZERO,
-    val lastFactsUsage: TokenUsage? = null
+    val lastFactsUsage: TokenUsage? = null,
+    val lastModelInputTokens: Long = 0
 )
 
 internal fun summaryUsageMessage(usage: TokenUsage?): String {

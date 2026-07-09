@@ -127,12 +127,11 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
-    fun `sticky facts are extracted silently when model context window is reached`() {
+    fun `sticky facts are extracted silently at 95 percent of the locally tracked model context window`() {
         val repository = ChatHistoryRepository(systemPrompt = "system")
-        repository.addUser("older request")
-        repository.addAssistant("details ".repeat(3_000))
         val httpClient = RecordingHttpClient(
             listOf(
+                assistantResponse("previous answer", promptTokens = 1_040),
                 assistantResponse("project_goal: keep the important plan"),
                 assistantResponse("final answer")
             )
@@ -148,13 +147,14 @@ class DeepSeekAiAgentRequestBodyTest {
             httpClient = httpClient
         )
 
+        agent.send("first message")
         agent.send("goal: keep the important plan")
 
-        assertEquals(2, httpClient.requestBodies.size)
-        assertContains(httpClient.requestBodies[0], "reaching the configured model context window")
-        assertContains(httpClient.requestBodies[0], "goal: keep the important plan")
-        assertContains(httpClient.requestBodies[1], "Sticky facts:")
-        assertContains(httpClient.requestBodies[1], "project_goal: keep the important plan")
+        assertEquals(3, httpClient.requestBodies.size)
+        assertContains(httpClient.requestBodies[1], "reaching the configured model context window")
+        assertContains(httpClient.requestBodies[1], "goal: keep the important plan")
+        assertContains(httpClient.requestBodies[2], "Sticky facts:")
+        assertContains(httpClient.requestBodies[2], "project_goal: keep the important plan")
         assertFalse(repository.all().any { it.role == Role.EVENT && it.content.contains("Sticky facts") })
     }
 
@@ -505,8 +505,8 @@ class DeepSeekAiAgentRequestBodyTest {
         ) as HttpRequest
     }
 
-    private fun assistantResponse(content: String): String =
-        """{"choices":[{"finish_reason":"stop","message":{"content":"${JsonTools.escape(content)}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+    private fun assistantResponse(content: String, promptTokens: Int = 1): String =
+        """{"choices":[{"finish_reason":"stop","message":{"content":"${JsonTools.escape(content)}"}}],"usage":{"prompt_tokens":$promptTokens,"completion_tokens":1}}"""
 
     private fun memoryRepository(
         directory: java.nio.file.Path,
