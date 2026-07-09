@@ -74,6 +74,25 @@ class DeepSeekStageChatClientMcpTest {
     }
 
     @Test
+    fun `stage client sends model context window to provider options`() {
+        val httpClient = RecordingHttpClient(
+            listOf(assistantResponse("""{"success":true,"summary":"done","output":"Done","issues":[],"requestedChanges":[],"retryReason":null}"""))
+        )
+        val client = DeepSeekStageChatClient(
+            settings = AgentSettings(
+                apiKey = "key",
+                modelContextWindowTokens = 32_768,
+                systemPrompt = "system"
+            ),
+            httpClient = httpClient
+        )
+
+        client.send(listOf(ChatMessage(Role.USER, "Run stage")))
+
+        assertContains(httpClient.requestBodies.single(), "\"options\": {\"num_ctx\": 32768}")
+    }
+
+    @Test
     fun `stage client executes multiple requested mcp tool calls`() {
         val httpClient = RecordingHttpClient(
             listOf(

@@ -3,6 +3,7 @@ package task
 import agent.AgentException
 import agent.AgentSettings
 import agent.JsonTools
+import agent.ModelRequestJson
 import agent.ResponseLimitClassifier
 import chat.ChatMessage
 import chat.Role
@@ -552,6 +553,7 @@ class DeepSeekStageChatClient(
         }
         if (settings.thinkingMode) fields += """"reasoning_effort": "high"""" else fields += """"temperature": ${settings.temperature}"""
         if (settings.maxTokens > 0) fields += """"max_tokens": ${settings.maxTokens}"""
+        ModelRequestJson.contextWindowOptions(settings)?.let { fields += it }
         return fields.joinToString(",\n  ", "{\n  ", "\n}")
     }
 

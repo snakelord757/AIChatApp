@@ -469,6 +469,7 @@ class DeepSeekAiAgent(
         if (settings.maxTokens > 0) {
             fields += """"max_tokens": ${settings.maxTokens}"""
         }
+        ModelRequestJson.contextWindowOptions(settings)?.let { fields += it }
 
         return fields.joinToString(
             separator = ",\n  ",

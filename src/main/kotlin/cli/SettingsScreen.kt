@@ -51,7 +51,7 @@ class SettingsScreen(
         println("set thinking <on|off> - enable or disable thinking mode")
         println("set temperature <0..2> - change the temperature")
         println("set maxTokens <number> - change the max token limit; <= 0 means unlimited")
-        println("set modelContextWindow <tokens> - change the model context window used for context trimming")
+        println("set modelContextWindow <tokens> - change the model context window sent to the provider")
         println("set summaryInterval <number> - change the automatic summary interval; 0 disables it")
         println("set planningSwarmEnabled <true|false> - enable or disable experimental planning swarm")
         println("set ragEnabled <true|false> - enable or disable RAG chat mode")

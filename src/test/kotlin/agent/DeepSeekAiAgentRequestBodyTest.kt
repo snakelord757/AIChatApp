@@ -47,6 +47,19 @@ class DeepSeekAiAgentRequestBodyTest {
     }
 
     @Test
+    fun `model context window is sent to provider options`() {
+        val body = buildRequestBody(
+            AgentSettings(
+                apiKey = "",
+                modelContextWindowTokens = 32_768,
+                systemPrompt = "system"
+            )
+        )
+
+        assertContains(body, "\"options\": {\"num_ctx\": 32768}")
+    }
+
+    @Test
     fun `request does not set response timeout`() {
         val request = buildRequest(AgentSettings(apiKey = "key", systemPrompt = "system"))
 
